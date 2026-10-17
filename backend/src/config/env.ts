@@ -7,10 +7,22 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   FRONTEND_URL: z.string().default("http://localhost:5173"),
+  // Set true only when the API sits behind a reverse proxy that sanitises X-Forwarded-For (Caddy in
+  // production). Without it every request appears to come from the proxy, which breaks the login
+  // records' IPs and makes rate limiting throttle all users as one.
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 
   // Storage credentials (StorageConfig.credentials) are encrypted at rest with this key —
   // 32 random bytes, base64-encoded. Rotating it invalidates every saved storage config.
-  STORAGE_CREDENTIALS_KEY: z.string().min(1, "STORAGE_CREDENTIALS_KEY is required"),
+  STORAGE_CREDENTIALS_KEY: z
+    .string()
+    .min(1, "STORAGE_CREDENTIALS_KEY is required")
+    .refine((v) => Buffer.from(v, "base64").length === 32, {
+      message: "STORAGE_CREDENTIALS_KEY must be 32 random bytes, base64-encoded",
+    }),
 
   JWT_ACCESS_SECRET: z.string().min(1, "JWT_ACCESS_SECRET is required"),
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
@@ -37,6 +49,15 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
+}).superRefine((env, ctx) => {
+  // A placeholder or short signing secret in production would let anyone mint access tokens.
+  if (env.NODE_ENV === "production" && (env.JWT_ACCESS_SECRET.length < 32 || /change-me/i.test(env.JWT_ACCESS_SECRET))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["JWT_ACCESS_SECRET"],
+      message: "JWT_ACCESS_SECRET must be a random value of at least 32 characters in production",
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

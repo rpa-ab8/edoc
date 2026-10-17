@@ -1,0 +1,20 @@
+# Keep the build context small and free of secrets.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/*.traineddata
+.git
+.github
+.vscode
+.idea
+graphify-out
+docs
+backups
+*.log
+
+# Secrets and local-only files — never baked into an image.
+.env
+.env.*
+!.env.example
+!.env.production.example
+CLAUDE.local.md

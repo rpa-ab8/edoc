@@ -2440,3 +2440,81 @@ since Module 6.
 **Test data left in Ajilan Personal / Ajilan:** `AJ-DOC-2026-00001` ("Browser pass test
 (renamed)", 4 versions, view share to the Super Admin), folder **BP Vault** (confidential) with
 `AJ-DOC-2026-00002`. Safe to purge from Trash; their audit rows stay (append-only).
+
+## 2026-10-17 — Module 14: Deployment & operations (+ pre-production hardening)
+
+Everything needed to run Release 1 on the chosen DigitalOcean `s-4vcpu-8gb` droplet. The whole
+production stack was **built and run locally** (`docker compose -p dms-smoke`) and exercised end to
+end; nothing below is untested except where stated.
+
+**Hardening (backend):**
+- **`TRUST_PROXY`** env → Fastify `trustProxy`. Behind Caddy, `request.ip` (written to
+  `login_attempt.ip_address`) was going to be the proxy's IP for every user. Verified in the smoke
+  run: the recorded IP is the client, not Caddy's container.
+- **Rate limiting** (`@fastify/rate-limit`, `lib/rate-limits.ts`), **opt-in per route, no global
+  limit** — an office shares one public IP, so a global per-IP cap would throttle 250 signed-in
+  users as one. Tiers: `sensitive` 10/min (register, forgot/reset password, resend verification,
+  accept invitation), `login` 30/min (login, verify email — per-email lockout AUTH-7 still applies),
+  `publicRead` 120/min (invitation preview, external link open/file). 429 body uses the app's usual
+  `{ error: "rate_limited", message }`. Verified live (11th forgot-password → 429).
+- **Env validation:** `STORAGE_CREDENTIALS_KEY` must decode to exactly 32 bytes; in production
+  `JWT_ACCESS_SECRET` must be ≥ 32 chars and not a `change-me` placeholder — the API refuses to start
+  otherwise.
+- `/health` logs at warn level (polled every 15 s by the healthcheck).
+- **Dependencies:** `prisma` moved to `dependencies` (the image runs `migrate deploy`);
+  `npm audit fix` (non-breaking) cleared 6 of 9 high advisories, including a multipart-boundary DoS
+  in `@fastify/busboy` that sits under the upload endpoint, plus fastify, find-my-way, fast-uri,
+  react-router. **Remaining 3 are Prisma-CLI-only** (`deepmerge-ts` via `@prisma/config`), fixed only
+  in Prisma 7 (major) — flagged, not taken.
+
+**Containers:**
+- `backend/Dockerfile` — one image, three roles: API (default), OCR worker
+  (`node dist/worker/ocr.worker.js`), one-shot `migrate` (`prisma migrate deploy`). Multi-stage,
+  runtime has prod deps only, runs as `node` (uid 1000), `openssl` for Prisma's engine.
+- `frontend/Dockerfile` — builds the SPA with `VITE_API_URL=/api` and ships it inside Caddy.
+- `deploy/Caddyfile` — automatic HTTPS, security headers (HSTS, nosniff, SAMEORIGIN, referrer,
+  permissions policy, a deliberately narrow CSP so blob: PDF previews keep working), `/api/*` →
+  api with the prefix stripped (same origin: no CORS, the `path=/` refresh cookie just works),
+  immutable caching for hashed assets, SPA fallback, 130 MB body cap. **`trusted_proxies` defaults
+  to none** — trusting private ranges would let any LAN user (NAS/on-prem deployment) forge
+  X-Forwarded-For; Cloudflare-proxied sites set Cloudflare's ranges explicitly.
+- `docker-compose.prod.yml` (project `dms-prod`, so it can't collide with the dev project `dms`):
+  web, api, worker, migrate, postgres, redis (password, AOF), backup, optional `uptime-kuma`
+  profile bound to localhost. No published DB/Redis ports, healthchecks, `json-file` log rotation,
+  required-variable checks.
+- `deploy/backup/` — `pg_dump` custom format on a cron schedule to `./backups`, local pruning,
+  optional copy to a separate R2 bucket; `restore.sh`.
+- `.dockerignore`, `.gitattributes` (LF for `*.sh`/Caddyfile/Dockerfile/YAML — a CRLF shebang
+  breaks inside Linux containers), `.env.production.example`, `.gitignore` now covers
+  `.env.production` and `backups/`.
+
+**CI:** `.github/workflows/ci.yml` — lint, backend typecheck, frontend build, `migrate deploy` on a
+fresh Postgres, then the two **self-contained** suites (tenant-isolation 69, access-matrix 77 —
+both re-run green against a fresh database locally), then builds all three images. The other ten
+suites need the real "Abate" org (some its R2) so they stay dev-only — making them self-contained
+is a follow-up. **Not run on GitHub yet** — the repo has no remote. No deploy job: deploys are the
+runbook's `git checkout <tag> && dc up -d --build` on the server.
+
+**Runbook:** `deploy/README.md` — droplet + firewall, DNS/Cloudflare (DNS-only recommended; the
+three things orange-cloud needs), first deploy, **bootstrapping the first organization** (an
+`invite_code` row via psql — the default signup mode requires one, and none exists on a fresh DB),
+NAS variant (same path in api + worker, writable by uid 1000), update/rollback (backup first;
+migrations are forward-only), backup/restore, secret rotation table, monitoring, troubleshooting,
+5-minute post-deploy smoke test.
+
+**Verified locally on the production images (smoke run, then torn down):**
+- Migrations applied on a fresh DB (7/7); all services healthy.
+- Through Caddy: headers present, `Server` stripped, SPA fallback, `/api` proxy, bundle calls
+  `/api` (no `localhost:4000`), gzip 507 KB → 147 KB, `caddy fmt` clean.
+- Scripted end-to-end (14/14): invite code via psql → register → verify → create org (code is
+  single-use) → refresh cookie `Path=/; HttpOnly; SameSite=Lax; Secure` → client IP recorded
+  correctly → NAS storage verified writing as uid 1000 → department → PDF upload through Caddy →
+  OCR worker in its container → search by a word inside the file → preview bytes → 126 MiB → 413.
+- Image OCR: tesseract.js initialised in the worker container and downloaded its language data
+  into the writable working directory.
+- Backup → sentinel row → restore (api/worker stopped) → counts identical, sentinel gone; cron
+  schedule fires with the environment intact.
+
+**Not verified:** the off-server copy to R2 (no backup bucket/keys yet), Let's Encrypt issuance
+(needs the real domain), the GitHub Actions run itself. **Not built:** Sentry (Tech Stack §3.10) —
+errors go to container logs only.

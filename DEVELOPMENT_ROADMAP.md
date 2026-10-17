@@ -662,9 +662,18 @@ and must keep the baseline-then-restrict ordering intact.
 
 ## 16. Module 14 — Deployment & operations
 
-**Status:** ⬜ Not started
+**Status:** ✅ Done (2026-10-17) — built and smoke-tested locally on the production images; first real deploy pending a domain + server
 **Depends on:** functional modules ready to deploy
 
+- [x] 2026-10-17: `backend/Dockerfile` (api / worker / migrate), `frontend/Dockerfile` (Caddy + SPA),
+  `deploy/Caddyfile`, `docker-compose.prod.yml`, `deploy/backup/` (scheduled `pg_dump`, optional R2
+  copy, restore), `.github/workflows/ci.yml`, runbook `deploy/README.md`. Plus hardening:
+  `TRUST_PROXY`, per-route rate limits, strict secret validation, `npm audit fix`. Smoke run on the
+  production images: 14/14 end-to-end checks, image OCR, backup → restore round-trip, cron firing.
+  See `each_update.md`.
+- **Open:** Sentry not wired; off-server backup copy and Let's Encrypt untested until real
+  credentials/domain exist; CI not yet run on GitHub (no remote); 10 of 12 check suites need the
+  real "Abate" org and are dev-only; 3 Prisma-CLI advisories need Prisma 7.
 - Docker Compose for backend + Postgres + Redis + reverse proxy (per Tech Stack doc §3.9), Caddy/Nginx + Let's Encrypt for TLS, static frontend served by the same proxy.
 - Monitoring: Uptime Kuma, Sentry free tier, container log rotation.
 - Backups: scheduled `pg_dump` to object storage.
@@ -708,14 +717,15 @@ Per `docs/DMS_Scope_and_MVP_Definition.md` §4 and CLAUDE.md's "Current build ph
 | 11 | Trash & recovery | ✅ Done — backend 19 checks green (`npm run check:trash`); frontend built & compile-clean |
 | 12 | Audit log viewer & export | ✅ Done — backend 15 checks green (`npm run check:audit`); frontend built & compile-clean |
 | 13 | Non-functional hardening | ✅ Done — tenant-isolation 69 + access-matrix 77 checks green; performance targets met with headroom; 5 defects fixed |
-| 14 | Deployment & operations | ⬜ |
+| 14 | Deployment & operations | ✅ Done — Docker/Caddy/compose/backups/CI/runbook, smoke-tested locally; first real deploy pending |
 
 **Suite totals (2026-07-25, all green):** `permissions 30 · folders 31 · documents 40 · search 24 ·
 viewer 12 · sharing 39 · confidential 29 · trash 19 · audit 15 · tenant-isolation 69 · access-matrix 77
 · performance 11 passed / 1 skipped` — **396 assertions across twelve suites.**
 
-**Next up:** **Module 14 (Deployment & operations)** — Docker Compose + reverse proxy/TLS, backups
-(`pg_dump`), monitoring, CI/CD. Budget/server sizing: `docs/DMS_Budget_Plan_s-4vcpu-8gb.md`.
+**Next up:** the **first production deploy** — follow `deploy/README.md` (needs: domain, droplet,
+Brevo sender domain, R2 bucket for documents and a separate one for backups). Budget/server sizing:
+`docs/DMS_Budget_Plan_s-4vcpu-8gb.md`.
 
 - [x] 2026-10-17: **member browser-verification pass done** (Dept Admin + Super Admin, *Ajilan
   Personal* org): upload byte-path, search-inside-file, viewer, versions/restore, sharing + external

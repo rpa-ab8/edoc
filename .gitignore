@@ -5,6 +5,10 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.production
+
+# Database dumps written by the production backup service
+backups/
 
 # Build output
 dist/

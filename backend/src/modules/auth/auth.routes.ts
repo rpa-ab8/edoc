@@ -15,6 +15,7 @@ import * as authService from "./auth.service.js";
 import { AuthError } from "./auth.service.js";
 import { REFRESH_COOKIE_NAME } from "./auth.service.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { RATE_LIMITS } from "../../lib/rate-limits.js";
 
 function requestContext(request: FastifyRequest) {
   return {
@@ -41,7 +42,7 @@ export default async function authRoutes(
     return reply.send({ mode: setting?.mode ?? "invite_code" });
   });
 
-  app.post("/register", async (request, reply) => {
+  app.post("/register", { config: { rateLimit: RATE_LIMITS.sensitive } }, async (request, reply) => {
     const body = registerSchema.parse(request.body);
     try {
       const result = await authService.register(deps, body, requestContext(request));
@@ -52,7 +53,7 @@ export default async function authRoutes(
     }
   });
 
-  app.post("/verify-email", async (request, reply) => {
+  app.post("/verify-email", { config: { rateLimit: RATE_LIMITS.login } }, async (request, reply) => {
     const body = verifyEmailSchema.parse(request.body);
     try {
       await authService.verifyEmail(deps, body.token);
@@ -64,7 +65,7 @@ export default async function authRoutes(
 
   app.post(
     "/resend-verification",
-    { preHandler: app.authenticate },
+    { preHandler: app.authenticate, config: { rateLimit: RATE_LIMITS.sensitive } },
     async (request, reply) => {
       try {
         await authService.resendVerification(deps, request.user!.sub);
@@ -85,7 +86,7 @@ export default async function authRoutes(
     }
   });
 
-  app.post("/login", async (request, reply) => {
+  app.post("/login", { config: { rateLimit: RATE_LIMITS.login } }, async (request, reply) => {
     const body = loginSchema.parse(request.body);
     try {
       const result = await authService.login(deps, body, requestContext(request));
@@ -160,7 +161,7 @@ export default async function authRoutes(
     },
   );
 
-  app.post("/forgot-password", async (request, reply) => {
+  app.post("/forgot-password", { config: { rateLimit: RATE_LIMITS.sensitive } }, async (request, reply) => {
     const body = forgotPasswordSchema.parse(request.body);
     await authService.forgotPassword(deps, body.email);
     return reply.send({
@@ -168,7 +169,7 @@ export default async function authRoutes(
     });
   });
 
-  app.post("/reset-password", async (request, reply) => {
+  app.post("/reset-password", { config: { rateLimit: RATE_LIMITS.sensitive } }, async (request, reply) => {
     const body = resetPasswordSchema.parse(request.body);
     try {
       await authService.resetPassword(deps, body.token, body.newPassword);

@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 import type { Env } from "./config/env.js";
 import type { PrismaClient } from "@prisma/client";
@@ -42,6 +43,8 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
     },
+    // Behind Caddy in production: request.ip comes from X-Forwarded-For, which Caddy sanitises.
+    trustProxy: env.TRUST_PROXY,
   });
 
   app.decorate("env", env);
@@ -54,6 +57,16 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
     credentials: true,
   });
   app.register(cookie);
+  // Opt-in per route (see lib/rate-limits.ts) — no global limit, since an office shares one IP.
+  // Registered before every route plugin so its onRoute hook sees their `config.rateLimit`.
+  app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      code: "rate_limited",
+      message: `Too many attempts. Try again in ${context.after}.`,
+    }),
+  });
   // File uploads (Module 6). fileSize is the hard byte ceiling — a larger file trips the limit and
   // is surfaced as a clean 413 rather than being partially stored. One file per request (bulk is
   // many independent requests); a handful of accompanying text fields (metadata, duplicate choice).
@@ -81,7 +94,8 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
   app.register(confidentialRoutes, { prisma });
   app.register(auditRoutes, { prisma, prefix: "/departments" });
 
-  app.get("/health", async () => {
+  // Polled every 15s by the container healthcheck (and by uptime monitoring) — not worth a log line.
+  app.get("/health", { logLevel: "warn" }, async () => {
     return {
       status: "ok",
       timestamp: new Date().toISOString(),

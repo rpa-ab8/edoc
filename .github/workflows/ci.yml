@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, build, isolation suites
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dms
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: dms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway values for a throwaway database — not secrets.
+      DATABASE_URL: postgresql://dms:ci@localhost:5432/dms
+      REDIS_URL: redis://localhost:6379
+      STORAGE_CREDENTIALS_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      JWT_ACCESS_SECRET: ci-only-signing-secret-not-used-anywhere-else
+      MAIL_DISABLED: "true"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: backend
+      - run: npm run lint
+      - name: Typecheck backend
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: backend
+      - name: Build frontend (tsc -b + vite build)
+        run: npm run build --workspace frontend
+      - name: Apply migrations to a fresh database
+        run: npx prisma migrate deploy
+        working-directory: backend
+      # The two suites that build their own fixtures. The rest expect the real "Abate" org (and
+      # some its R2 storage), so they run against a dev database, not CI.
+      - name: Tenant isolation suite
+        run: npx tsx scripts/check-tenant-isolation.ts
+        working-directory: backend
+      - name: Access matrix suite
+        run: npx tsx scripts/check-access-matrix.ts
+        working-directory: backend
+
+  images:
+    name: Build production images
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Backend (api / worker / migrate)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Web (Caddy + SPA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - name: Backup
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/backup
+          push: false
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup

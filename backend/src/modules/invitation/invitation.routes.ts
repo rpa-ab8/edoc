@@ -7,6 +7,7 @@ import { InvitationError } from "./invitation.service.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
 import { REFRESH_COOKIE_NAME } from "../auth/auth.service.js";
 import { verifyAccessToken } from "../../lib/jwt.js";
+import { RATE_LIMITS } from "../../lib/rate-limits.js";
 
 const createInvitationSchema = z.object({
   email: z.string().trim().email(),
@@ -111,7 +112,7 @@ export async function publicInvitationRoutes(
 ) {
   const deps = { prisma: opts.prisma, redis: opts.redis, env: app.env };
 
-  app.get("/:token", async (request, reply) => {
+  app.get("/:token", { config: { rateLimit: RATE_LIMITS.publicRead } }, async (request, reply) => {
     const { token } = request.params as { token: string };
     try {
       const invitation = await invitationService.previewInvitation(deps, token);
@@ -124,7 +125,7 @@ export async function publicInvitationRoutes(
   // Optional authentication: an existing account must be signed in to accept, but a brand-new
   // recipient has no session yet — so this route reads a token if one is present and doesn't
   // require it.
-  app.post("/:token/accept", async (request, reply) => {
+  app.post("/:token/accept", { config: { rateLimit: RATE_LIMITS.sensitive } }, async (request, reply) => {
     const { token } = request.params as { token: string };
     const body = acceptInvitationSchema.parse(request.body ?? {});
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as sharingService from "./sharing.service.js";
 import { SharingError } from "./sharing.service.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
+import { RATE_LIMITS } from "../../lib/rate-limits.js";
 
 const permissionSchema = z.enum(["view", "download"]);
 
@@ -163,7 +164,7 @@ export async function sharingRoutes(app: FastifyInstance, opts: { prisma: Prisma
   );
 
   // ── public: an external-link holder has a token, not an account or a session ──
-  app.get("/links/:token", async (request, reply) => {
+  app.get("/links/:token", { config: { rateLimit: RATE_LIMITS.publicRead } }, async (request, reply) => {
     const { token } = request.params as { token: string };
     try {
       const doc = await sharingService.openLink(deps, token);
@@ -173,7 +174,7 @@ export async function sharingRoutes(app: FastifyInstance, opts: { prisma: Prisma
     }
   });
 
-  app.get("/links/:token/file", async (request, reply) => {
+  app.get("/links/:token/file", { config: { rateLimit: RATE_LIMITS.publicRead } }, async (request, reply) => {
     const { token } = request.params as { token: string };
     const { download } = request.query as { download?: string };
     const mode = download === "1" || download === "true" ? "download" : "preview";
