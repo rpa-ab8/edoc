@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    /* Inter's default figures are proportional and its punctuation is loose; these two
+       features are what make it read as "smooth" rather than merely legible at 15px. */
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: rgb(15 107 82 / 0.16);
+    color: #0f172a;
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d5dad7;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #b9c1bd;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* ── Signature: the engraved plate ──────────────────────────────────────────
+     A document ID here is permanent — assigned once, never reused, carried across
+     every version of the document. So identifiers get their own treatment: mono,
+     on a tinted plate, in the action colour. It marks a value the system guarantees,
+     as opposed to one a user typed. Used for document IDs and department prefixes,
+     and nowhere else. */
+  .plate {
+    @apply rounded-md bg-primary-tint font-mono text-[13px] font-medium text-primary;
+    letter-spacing: 0.01em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

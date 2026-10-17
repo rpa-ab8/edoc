@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+frontend/dist/
+backend/dist/
+
+# Prisma
+backend/prisma/migrations/dev.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/coverage
+coverage/
+
+# TypeScript incremental build state
+*.tsbuildinfo
+
+# Tesseract language data (downloaded/cached at runtime by tesseract.js)
+*.traineddata
+
+# Generated knowledge graph (regenerate with /graphify)
+graphify-out/
+
+# Local-only Claude Code notes (holds test credentials)
+CLAUDE.local.md
