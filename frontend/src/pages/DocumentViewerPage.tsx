@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { primaryButtonBase, secondaryButtonBase } from "../components/AuthCard";
 import { FileTypeIcon } from "../components/FileTypeIcon";
 import { MetadataFields, type FieldValues } from "../components/upload/MetadataFields";
@@ -24,11 +24,13 @@ import {
   downloadDocumentFile,
   editDocumentMetadata,
   fetchDocument,
+  fetchDocumentActivity,
   fetchPreviewObjectUrl,
   humanFileSize,
   isPreviewable,
   restoreDocumentVersion,
   uploadNewVersion,
+  type DocumentDetail,
 } from "../lib/documents";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -65,8 +67,9 @@ export function DocumentViewerPage() {
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
 
-  const { data: doc, refetch, isLoading, error } = useQuery({
+  const { data: doc, isLoading, error } = useQuery({
     queryKey: ["document", documentId],
     queryFn: () => fetchDocument(documentId),
     enabled: Boolean(documentId),
@@ -100,8 +103,11 @@ export function DocumentViewerPage() {
   const docType = department?.documentTypes.find((t) => t.id === doc?.documentType.id);
 
   // Fetch the preview bytes (as an object URL) for the current version, and revoke on change/unmount.
+  // Keyed on ids, not objects, so a metadata-only edit doesn't re-download the file.
+  const docId = doc?.id;
+  const currentVersionId = currentVersion?.id;
   useEffect(() => {
-    if (!doc || !currentVersion || !canPreview || !previewType) {
+    if (!docId || !currentVersionId || !canPreview || !previewType) {
       setPreviewUrl(null);
       return;
     }
@@ -109,7 +115,7 @@ export function DocumentViewerPage() {
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewFailed(false);
-    fetchPreviewObjectUrl(doc.id, currentVersion.id)
+    fetchPreviewObjectUrl(docId, currentVersionId)
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url);
@@ -124,14 +130,22 @@ export function DocumentViewerPage() {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [doc, currentVersion, canPreview, previewType]);
+  }, [docId, currentVersionId, canPreview, previewType]);
 
-  async function run(work: () => Promise<void>, okText: string) {
+  // After an action, take the updated document from the action's own response and refresh only the
+  // activity feed. Re-fetching GET /documents/:id would log a fresh `view` on every edit/restore/
+  // version upload, padding the audit trail with views nobody made.
+  async function run(work: () => Promise<DocumentDetail | void>, okText: string) {
     setBusy(true);
     setMessage(null);
     try {
-      await work();
-      await refetch();
+      const updated = await work();
+      const activity = await fetchDocumentActivity(documentId).catch(() => undefined);
+      queryClient.setQueryData<DocumentDetail>(["document", documentId], (prev) =>
+        prev
+          ? { ...prev, ...(updated ?? {}), permissions: prev.permissions, activity: activity ?? prev.activity }
+          : prev,
+      );
       setMessage({ text: okText, ok: true });
     } catch (err) {
       setMessage({ text: err instanceof ApiRequestError ? err.message : "Something went wrong.", ok: false });
@@ -152,17 +166,16 @@ export function DocumentViewerPage() {
       const fieldValues = Object.entries(editValues)
         .filter(([, v]) => v.trim() !== "")
         .map(([fieldDefId, value]) => ({ fieldDefId, value: value.trim() }));
-      await editDocumentMetadata(documentId, fieldValues);
+      const updated = await editDocumentMetadata(documentId, fieldValues);
       setEditing(false);
+      return updated;
     }, "Metadata saved.");
   }
   async function onVersionFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    await run(async () => {
-      await uploadNewVersion(documentId, file);
-    }, "New version uploaded.");
+    await run(async () => (await uploadNewVersion(documentId, file)).document, "New version uploaded.");
   }
 
   // Back returns to wherever the document was opened from — a search, a quick view, or a folder —
@@ -290,7 +303,13 @@ export function DocumentViewerPage() {
               <img src={previewUrl} alt={doc.titleValue ?? "Document preview"} className="max-h-[80vh] max-w-full rounded-lg border border-line bg-surface shadow-card" />
             </div>
           ) : (
-            <iframe title="Document preview" src={previewUrl} className="h-[82vh] w-full rounded-lg border border-line bg-surface" />
+            // Without documents.download, hide the browser PDF viewer's own download/print toolbar
+            // (VUE-5). A deterrent, not a guarantee — previewed bytes are on the client.
+            <iframe
+              title="Document preview"
+              src={canDownload ? previewUrl : `${previewUrl}#toolbar=0&navpanes=0`}
+              className="h-[82vh] w-full rounded-lg border border-line bg-surface"
+            />
           )}
         </main>
 
@@ -375,7 +394,7 @@ export function DocumentViewerPage() {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void run(() => restoreDocumentVersion(documentId, v.id).then(() => {}), `Restored v${v.versionNumber}.`)}
+                      onClick={() => void run(() => restoreDocumentVersion(documentId, v.id), `Restored v${v.versionNumber}.`)}
                       className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary hover:underline"
                     >
                       <RefreshIcon size={13} /> Restore this version

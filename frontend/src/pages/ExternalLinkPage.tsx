@@ -100,7 +100,14 @@ export function ExternalLinkPage() {
             {previewKind === "image" && preview ? (
               <img src={preview.url} alt={doc.title ?? "Document"} className="mx-auto max-h-[78vh] rounded-xl border border-line bg-surface shadow-card" />
             ) : previewKind === "pdf" && preview ? (
-              <iframe title="Document" src={preview.url} className="h-[80vh] w-full rounded-xl border border-line bg-surface" />
+              // A view-only link hides the browser PDF viewer's own toolbar, which would otherwise
+              // offer one-click download/print. A deterrent, not a guarantee: previewed bytes are
+              // on the client.
+              <iframe
+                title="Document"
+                src={doc.permission === "download" ? preview.url : `${preview.url}#toolbar=0&navpanes=0`}
+                className="h-[80vh] w-full rounded-xl border border-line bg-surface"
+              />
             ) : (
               <div className="rounded-2xl border border-dashed border-line bg-surface px-6 py-16 text-center">
                 <p className="text-[15px] font-semibold text-ink">No inline preview for this file type</p>

@@ -99,7 +99,7 @@ export function DashboardPage() {
     {
       label: "Storage used",
       value: dashboard ? formatBytes(dashboard.counts.storageUsedBytes) : undefined,
-      sub: "of total used",
+      sub: "Total stored",
       icon: <DatabaseIcon size={18} />,
       tone: "accent" as const,
     },
@@ -236,15 +236,11 @@ export function DashboardPage() {
                       {dashboard.storage.status === "verified" ? "Connected" : dashboard.storage.status}
                     </span>
                   </div>
+                  {/* No usage bar: the dashboard carries no quota to measure against, and a bar
+                      pinned at 100% read as "storage full" with a few KB stored. */}
                   <p className="mt-4 text-[13.5px] text-subtle">
-                    {formatBytes(dashboard.counts.storageUsedBytes)} used of storage
+                    {formatBytes(dashboard.counts.storageUsedBytes)} stored in total
                   </p>
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface-muted">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: dashboard.counts.storageUsedBytes === "0" ? "1.5%" : "100%" }}
-                    />
-                  </div>
                 </>
               ) : (
                 <p className="mt-4 text-[13.5px] text-subtle">Not configured yet.</p>

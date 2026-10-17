@@ -68,6 +68,9 @@ export function ShareDialog({
   const externalEnabled = department?.rules?.defaultSharing?.externalLinksEnabled ?? false;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["document-shares", documentId] });
+  // Shares revoked in this session — lets the external zone stop displaying a link that no longer works.
+  const [revokedIds, setRevokedIds] = useState<ReadonlySet<string>>(new Set());
+  const markRevoked = (id: string) => setRevokedIds((prev) => new Set(prev).add(id));
 
   return (
     <div
@@ -106,7 +109,7 @@ export function ShareDialog({
           />
 
           {canExternal && (
-            <ExternalZone documentId={documentId} enabled={externalEnabled} onDone={refresh} />
+            <ExternalZone documentId={documentId} enabled={externalEnabled} revokedIds={revokedIds} onDone={refresh} />
           )}
 
           <section className="mt-7 border-t border-line-muted pt-5">
@@ -120,7 +123,7 @@ export function ShareDialog({
             ) : (
               <ul className="space-y-2.5">
                 {shares.map((s) => (
-                  <ShareRow key={s.id} share={s} onChanged={refresh} />
+                  <ShareRow key={s.id} share={s} onChanged={refresh} onRevoked={markRevoked} />
                 ))}
               </ul>
             )}
@@ -223,15 +226,18 @@ function InternalZone({
 function ExternalZone({
   documentId,
   enabled,
+  revokedIds,
   onDone,
 }: {
   documentId: string;
   enabled: boolean;
+  revokedIds: ReadonlySet<string>;
   onDone: () => void;
 }) {
   const [permission, setPermission] = useState<SharePermission>("view");
   const [expiryDays, setExpiryDays] = useState("7");
-  const [linkUrl, setLinkUrl] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ shareId: string; url: string } | null>(null);
+  const linkUrl = created && !revokedIds.has(created.shareId) ? created.url : null;
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -243,7 +249,7 @@ function ExternalZone({
         expiresInDays: expiryDays.trim() === "" ? undefined : Number(expiryDays),
       }),
     onSuccess: (res) => {
-      setLinkUrl(res.linkUrl ?? null);
+      setCreated(res.linkUrl ? { shareId: res.share.id, url: res.linkUrl } : null);
       setError(null);
       onDone();
     },
@@ -334,7 +340,15 @@ function ExternalZone({
 
 // ── A single existing share, with revoke / permission change (SHR-6) ───────────
 
-function ShareRow({ share, onChanged }: { share: ShareView; onChanged: () => void }) {
+function ShareRow({
+  share,
+  onChanged,
+  onRevoked,
+}: {
+  share: ShareView;
+  onChanged: () => void;
+  onRevoked: (shareId: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revoked, setRevoked] = useState(false);
@@ -390,6 +404,7 @@ function ShareRow({ share, onChanged }: { share: ShareView; onChanged: () => voi
               void run(async () => {
                 await revokeShare(share.id);
                 setRevoked(true);
+                onRevoked(share.id);
               })
             }
             className="ml-auto flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium text-danger hover:bg-danger-tint disabled:opacity-50"

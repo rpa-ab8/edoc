@@ -28,7 +28,15 @@ export function TrashList({ departmentId, canPurge }: { departmentId: string; ca
     retry: false,
   });
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["trash", departmentId] });
+  // A restore puts a document back into a folder listing, search and the needs-details queue; a purge
+  // can change counts. The folder view usually stays mounted under the trash view, so it won't
+  // refetch on its own — invalidate everything document-shaped for this department.
+  const refresh = () =>
+    Promise.all(
+      [["trash", departmentId], ["documents", departmentId], ["search", departmentId], ["needs-details", departmentId]].map(
+        (queryKey) => queryClient.invalidateQueries({ queryKey }),
+      ),
+    );
 
   async function act(id: string, fn: () => Promise<unknown>) {
     setBusyId(id);

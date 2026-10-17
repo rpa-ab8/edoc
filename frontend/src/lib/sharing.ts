@@ -128,8 +128,12 @@ export function expiryLabel(expiresAt: string | null): string {
   if (!expiresAt) return "No expiry";
   const ms = new Date(expiresAt).getTime() - Date.now();
   if (ms <= 0) return "Expired";
-  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-  if (days >= 1) return `Expires in ${days} day${days === 1 ? "" : "s"}`;
+  // Round, not floor: a link created a moment ago for 7 days should read "7 days", not "6 days".
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (ms >= dayMs) {
+    const days = Math.round(ms / dayMs);
+    return `Expires in ${days} day${days === 1 ? "" : "s"}`;
+  }
   const hours = Math.max(1, Math.round(ms / (60 * 60 * 1000)));
   return `Expires in ${hours}h`;
 }

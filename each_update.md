@@ -2382,3 +2382,61 @@ the first-run download), `graphify-out/` (regenerable), `CLAUDE.local.md`.
 **First commit.** The repo had no commits at all; everything is now committed on `master`.
 `backend/_backfill.mts` (a one-off search-vector backfill with a hard-coded `C:/apps/DMS/.env`
 path) left untracked — delete it or move it into `backend/scripts/` if it's still wanted.
+
+## 2026-10-17 — Member browser-verification pass (Modules 4, 6–12) + 6 fixes
+
+Ran the whole app locally (Docker Postgres/Redis, API, OCR worker, Vite) and drove it in Chrome as
+the **Department Admin** in the *Ajilan Personal* org (not Abate — kept test data out of the real
+org), then as that org's **Super Admin** for the recipient side. This closes the browser debt carried
+since Module 6.
+
+**Verified working end to end:**
+- **Upload (UPL)** — the multipart byte path, never driven in a browser before. A generated PDF went
+  through the real file input → `AJ-DOC-2026-00001`. OCR worker processed it within seconds.
+- **Search (SRCH)** — a word that exists *only inside the PDF* ("zephyr") found the document, so
+  upload → worker → `search_vector` → search works for real.
+- **Viewer (VUE)** — preview, ID plate, details, version history, activity feed; metadata edit;
+  new version (same ID, v1 kept); restore = forward copy (v1 → v3, "Restored from v1"), never an
+  overwrite.
+- **Sharing (SHR)** — external link opens signed-out at `/l/:token`; revoke kills it on the next
+  load ("Link unavailable"). Share-by-reference to a user with **no department role** (the Super
+  Admin) appears in their *Shared with me* and opens read-only (no Share/Delete/Download/Edit).
+- **Trash (TRSH)** — soft delete leaves search; trash shows deleter, origin, 30-day countdown;
+  restore returns it.
+- **Confidential (CNF)** — create with toggle, Confidential badge, Manage access (owner protected),
+  no role-override control on a vault; Super Admin can't browse the department at all.
+- **Audit (AUD)** — every action above appears, confidential events flagged, CSV export present.
+
+**Fixed (all re-verified in the browser afterwards; `tsc`/`eslint`/`vite build` clean):**
+1. **View-only readers could download PDFs anyway** — Chrome's built-in PDF viewer shows its own
+   download/print toolbar regardless of our permission-driven toolbar. Without `documents.download`
+   (viewer) or on a view-only external link, the iframe now gets `#toolbar=0&navpanes=0`. A
+   deterrent, not a guarantee (previewed bytes are on the client; Firefox's viewer ignores the
+   flag) — a canvas-rendered viewer (PDF.js) is the real fix if this matters more.
+2. **Audit padded with phantom "view" events** — every edit/restore/new-version re-fetched
+   `GET /documents/:id`, which logs a view. The viewer now takes the updated document from the
+   action's own response and refreshes only `GET /documents/:id/activity` (non-logging). Preview
+   effect re-keyed on ids so a metadata edit no longer re-downloads the file.
+3. **Restore from Trash looked like it failed** — the folder list stayed stale (the folder view
+   stays mounted under the trash view, so nothing refetched). `TrashList` now invalidates
+   `documents`/`search`/`needs-details`/`trash` for the department.
+4. **Fresh 7-day link said "Expires in 6 days"** — `expiryLabel` floored; now rounds.
+5. **Revoked link still shown with a Copy button** in the share dialog — hidden once its share is
+   revoked.
+6. **Dashboard storage bar pinned at 100%** whenever anything was stored (1.8 KB looked like "disk
+   full"). The dashboard carries no quota (`storage_config.quota_bytes` exists but isn't returned),
+   so the bar is removed; label now "1.8 KB stored in total" / tile "Total stored".
+
+**Found, not changed (flagged):**
+- Deleting a document gives **no feedback** — one click, no confirm/undo/"moved to trash" notice.
+  Recoverable, but users will wonder what happened. Wants a toast-with-undo (no toast infra yet).
+- The department-wide **Trash view sits under the current folder's heading** ("General · 0
+  documents"), which reads oddly.
+- Chrome's PDF toolbar shows the **blob UUID** as the title instead of the filename (cosmetic).
+- "External link opened" logged **twice per open in dev only** — React StrictMode runs the page
+  effect twice; production runs it once. No code change.
+- Frontend bundle > 500 kB minified — code-split before production (Module 14).
+
+**Test data left in Ajilan Personal / Ajilan:** `AJ-DOC-2026-00001` ("Browser pass test
+(renamed)", 4 versions, view share to the Super Admin), folder **BP Vault** (confidential) with
+`AJ-DOC-2026-00002`. Safe to purge from Trash; their audit rows stay (append-only).

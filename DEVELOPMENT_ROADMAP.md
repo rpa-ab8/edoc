@@ -715,16 +715,16 @@ viewer 12 · sharing 39 · confidential 29 · trash 19 · audit 15 · tenant-iso
 · performance 11 passed / 1 skipped` — **396 assertions across twelve suites.**
 
 **Next up:** **Module 14 (Deployment & operations)** — Docker Compose + reverse proxy/TLS, backups
-(`pg_dump`), monitoring, CI/CD — plus the **browser-verification pass** as a member (`ajuzzz1234`),
-which is now the only functional debt left and should be done first since it closes the list below.
+(`pg_dump`), monitoring, CI/CD. Budget/server sizing: `docs/DMS_Budget_Plan_s-4vcpu-8gb.md`.
 
-**Small follow-ups worth doing, all needing a department-member (`ajuzzz1234`) browser session that
-the Super-Admin-only login can't provide:** a visual pass on **Module 7 search**, the **Module 8
-viewer** (preview/download/edit/version/activity), the **Module 9 share dialog + shared views + the
-external-link page**, the **Module 10 confidential create / manage / recovery**, the **Module 4
-folder-access override dialog**, the **Module 11 delete / trash / restore / empty-trash**, the
-**Module 12 audit viewer + export**, plus the outstanding **Module 6 upload byte-path** check. All
-are green at the backend and compile-clean in the UI.
+- [x] 2026-10-17: **member browser-verification pass done** (Dept Admin + Super Admin, *Ajilan
+  Personal* org): upload byte-path, search-inside-file, viewer, versions/restore, sharing + external
+  link + revoke, trash, confidential create/manage, audit. **Six defects fixed** — view-only PDF
+  download leak, phantom audit "view" events, stale folder after trash restore, link-expiry
+  off-by-one, revoked link still shown, fake 100% storage bar. Not clicked through: empty-trash /
+  delete-forever, confidential **recovery**, the **folder-access override dialog**, and the
+  download button (backend-covered by `check:trash`/`check:confidential`/`check:folders`/
+  `check:viewer`). Open UX flags (delete feedback, trash-view heading) in `each_update.md`.
 
 **Housekeeping flagged 2026-07-23:** the invitation tests sent real mail through Brevo to
 `@example.test` addresses. Add a mail-disabled switch for test runs before exercising that path
