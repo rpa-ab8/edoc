@@ -283,6 +283,24 @@ export async function hasPermission(
 }
 
 /**
+ * Whether the actor may hand someone a role carrying these permissions: never more than they hold
+ * in this department themselves. Without it, `members.invite` alone (which manager-shaped roles
+ * carry) would let someone invite or add a Department Admin — granting beyond their own reach. The
+ * Super Admin owns the organization and may grant any role.
+ */
+export async function canGrantRole(
+  prisma: PrismaClient,
+  actor: PermissionActor,
+  departmentId: string,
+  rolePermissions: unknown,
+): Promise<boolean> {
+  if (actor.isSuperAdmin) return true;
+  const { permissions } = await resolveEffectivePermissions(prisma, actor, departmentId);
+  const granted = (rolePermissions ?? {}) as Record<string, unknown>;
+  return Object.entries(granted).every(([key, on]) => on !== true || permissions[key] === true);
+}
+
+/**
  * The set of folder ids in a department that the actor may NOT see, because they are confidential
  * and the actor isn't on the named list. Callers building listing/search/count queries exclude
  * these at the query layer — a CLAUDE.md hard rule is that this is never left to the UI.

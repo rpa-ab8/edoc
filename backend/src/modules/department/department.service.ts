@@ -6,7 +6,7 @@ import {
   hasDepartmentAdminCapability,
   type PermissionMap,
 } from "../../lib/permissions.js";
-import { hasPermission } from "../../lib/effective-permissions.js";
+import { canGrantRole, hasPermission } from "../../lib/effective-permissions.js";
 import {
   DEPARTMENT_TEMPLATES,
   findTemplate,
@@ -946,6 +946,17 @@ export async function deleteRole(deps: Deps, actor: Actor, departmentId: string,
 
 // ───────────────────────── Members ─────────────────────────
 
+/** Nobody hands out a role with more access than they hold here themselves (see canGrantRole). */
+async function assertCanGrantRole(deps: Deps, actor: Actor, departmentId: string, rolePermissions: unknown) {
+  if (!(await canGrantRole(deps.prisma, actor, departmentId, rolePermissions))) {
+    throw new DepartmentError(
+      403,
+      "role_exceeds_yours",
+      "You can't give someone a role with more access than your own.",
+    );
+  }
+}
+
 export async function addMember(
   deps: Deps,
   actor: Actor,
@@ -958,6 +969,7 @@ export async function addMember(
 
   const role = await prisma.role.findFirst({ where: { id: roleId, departmentId } });
   if (!role) throw new DepartmentError(404, "role_not_found", "Role not found in this department.");
+  await assertCanGrantRole(deps, actor, departmentId, role.permissions);
 
   await assertUsersAreInOrganization(deps, actor.organizationId, [userId]);
 
@@ -1003,6 +1015,7 @@ export async function changeMemberRole(
 
   const role = await prisma.role.findFirst({ where: { id: roleId, departmentId } });
   if (!role) throw new DepartmentError(404, "role_not_found", "Role not found in this department.");
+  await assertCanGrantRole(deps, actor, departmentId, role.permissions);
 
   const membership = await prisma.membership.findUnique({
     where: { userId_departmentId: { userId, departmentId } },

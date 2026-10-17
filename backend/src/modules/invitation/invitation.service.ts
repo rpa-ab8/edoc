@@ -5,7 +5,7 @@ import { logAuditEvent } from "../../lib/audit.js";
 import { hashPassword } from "../../lib/password.js";
 import { sendMail } from "../../lib/mailer.js";
 import { hashToken, issueToken } from "../../lib/tokens.js";
-import { hasPermission, type PermissionActor } from "../../lib/effective-permissions.js";
+import { canGrantRole, hasPermission, type PermissionActor } from "../../lib/effective-permissions.js";
 import { issueRefreshToken, refreshCookieOptions } from "../auth/auth.service.js";
 import { signAccessToken } from "../../lib/jwt.js";
 
@@ -108,6 +108,13 @@ export async function createInvitation(
   const role = await prisma.role.findFirst({ where: { id: input.roleId, departmentId } });
   if (!role) {
     throw new InvitationError(404, "role_not_found", "That role isn't in this department.");
+  }
+  if (!(await canGrantRole(prisma, actor, departmentId, role.permissions))) {
+    throw new InvitationError(
+      403,
+      "role_exceeds_yours",
+      "You can't invite someone with a role that has more access than your own.",
+    );
   }
 
   // Data Model §2.3: inviting an email that already has an account creates a *membership*, not a

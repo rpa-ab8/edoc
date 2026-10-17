@@ -106,6 +106,28 @@ export function FolderIcon({ size = 16, className }: IconProps) {
   );
 }
 
+/** A folder with an arrow leaving it — "move this folder somewhere else". */
+export function FolderMoveIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path
+        d="M17.5 9V7c0-.7-.6-1.3-1.3-1.3H8.6L7.2 4H3.8c-.7 0-1.3.6-1.3 1.3v9.4c0 .7.6 1.3 1.3 1.3h5.7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12.5 13.5h5m0 0-2-2m2 2-2 2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function CheckIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

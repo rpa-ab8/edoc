@@ -2531,3 +2531,69 @@ with separately scoped tokens and a 60-day lifecycle on backups; read-only GitHu
 first-organization bootstrap (single-use invite code via psql → register → create org → verify →
 onboarding storage/department/invites, with the exact UI labels); a 9-point verification table;
 uptime monitoring; routine; troubleshooting; final checklist. `deploy/README.md` now points to it.
+
+## 2026-10-17 — End-user guide by persona (Claude Doc) + 3 UI gaps found
+
+Wrote the non-technical user guide as a shareable doc ("Abate DMS — User Guide",
+https://claude.ai/code/artifact/1ab6231a-7c23-445e-ac63-efed80775d66), every label checked against
+the frontend: how-to-use table, basics + screen tour, getting in, Staff, Managers, Read-only users,
+Department Admin, Super Admin, Auditor, Confidential folders, Outside recipients, a default-role ×
+feature table, and quick answers. Personas follow the template roles actually shipped (Staff,
+manager-type roles, Auditor, Department Admin) — there is no built-in "Viewer"; the guide tells admins
+to make one by copying Staff.
+
+**Gaps found while writing it (the guide documents today's behaviour; not fixed):**
+1. **Managers can't invite.** Manager-type template roles carry `members.invite`, but the Members tab
+   lives under Department settings, shown only with `configuration.edit_metadata_schema` (Dept Admin)
+   or to a Super Admin — the permission has no screen.
+2. **No folder move in the UI.** `lib/folders.ts` has `moveFolder` (FLD-4 API is built and tested)
+   but nothing calls it.
+3. **Super Admin without a department role can't reach that department's Audit log or Recovery.**
+   Both live in the workspace's ⋯ menu, and the workspace shows "You're not a member" to a
+   non-member Super Admin, even though the engine grants them `audit.view_audit` and recovery
+   authority. Reachable only by typing `/w/<id>/audit`.
+
+## 2026-10-17 — Fixed gaps 1 & 2: managers can invite; folders can be moved (+ a privilege-escalation fix)
+
+**Gap 1 — managers' `members.invite` had no screen.**
+- The left panel now shows **Members** (people icon) to anyone holding `members.invite`,
+  `members.change_role` or `members.remove` who can't configure the department; Department Admins
+  and the Super Admin still see **Department settings**.
+- `DepartmentDetailPage` shows only the tabs the caller can act on: Overview + Rules need
+  `configuration.edit_rules` (what the PATCH enforces), Document types any document-type /
+  metadata-schema key, Roles stays Super-Admin-only, Members is always visible (read-only when
+  nothing is granted). It waits for the caller's permissions before rendering so tabs don't flash.
+  The remove button now follows `members.remove` (it was keyed to `members.change_role`).
+- **Security fix found on the way — `members.invite` could grant any role.** Invite and
+  add-existing-member accepted any role in the department, so a manager could have invited or added
+  a Department Admin through the API. New `canGrantRole()` in the permission engine: you may only
+  grant a role whose permissions you hold yourself in that department (Super Admin exempt). Enforced
+  in `createInvitation`, `addMember` and `changeMemberRole` (`403 role_exceeds_yours`); the UI offers
+  only grantable roles and says so.
+
+**Gap 2 — no folder move in the UI (FLD-4).**
+- New `MoveFolderDialog` (+ `FolderMoveIcon`), opened from a move button next to rename/delete for
+  `folders.move` holders. Destination tree (top level + the caller's visible folders), with invalid
+  spots disabled and labelled: current location, the folder itself / its own subfolders, "Too deep"
+  (the whole branch's depth against the limit), "Already has a folder with this name". Warns that
+  moving into a confidential folder makes it confidential permanently. Refreshes folders and
+  re-resolves permissions afterwards.
+- **Second gap closed:** the move route only checked `folders.move` on the folder being moved, so the
+  API accepted a destination the caller couldn't see — e.g. a confidential vault they aren't named
+  on. The route now gates `folders.move` at the destination as well (same engine, same uniform 403,
+  so it reveals nothing). Kept in the route, not the service, per the documented layering invariant —
+  a first attempt in the service broke `check:folders`, which builds fixtures through the service.
+
+**Tests:** `check:access-matrix` **88** (was 77; +11: manager can't add/invite a Dept Admin, can add
+within their own role, can't change roles, Super Admin can grant any role, destination gate refuses an
+unseen vault and admits ordinary folders/top level, move there and back). Green: `check:folders` 31,
+`check:confidential` 29, `check:permissions` 30, `check:tenant-isolation` 69, `check:documents` 40.
+Backend + frontend `tsc`/`eslint` clean. **Not browser-verified** — the dev servers were stopped for
+low memory and weren't restarted.
+
+**User guide updated** (it had also been wrong in two places): Department Admins don't see the Roles
+tab (Super Admin only — section moved), the Super Admin can't add themselves to a department (a
+Department Admin must), the ID prefix *is* editable (affects new documents only); added Managers'
+"Move a folder" and "Invite people", and refreshed the who-can-do-what table.
+
+Gap 3 (non-member Super Admin can't reach a department's Audit log / Recovery) is still open.

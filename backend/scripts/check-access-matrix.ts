@@ -32,6 +32,8 @@ import * as search from "../src/modules/search/search.service.js";
 import * as sharing from "../src/modules/sharing/sharing.service.js";
 import * as audit from "../src/modules/audit/audit.service.js";
 import * as confidential from "../src/modules/confidential/confidential.service.js";
+import * as department from "../src/modules/department/department.service.js";
+import * as invitations from "../src/modules/invitation/invitation.service.js";
 import { permissionMapFrom, type PermissionKey } from "../src/lib/permissions.js";
 import { resolveEffectivePermissions, type PermissionActor } from "../src/lib/effective-permissions.js";
 
@@ -333,6 +335,59 @@ try {
   await refuses("a vault document can't leave by external link", () =>
     sharing.createShare(deps, editor.actor, vaultDoc.id, { targetType: "external_link", permission: "view", expiresInDays: 7 }),
   );
+
+  console.log("\n── granting roles: never more than you hold yourself ──");
+  // Manager-shaped: may invite and move folders, but is not a department administrator.
+  const managerRole = await role(alpha.dept.id, "Manager", [
+    "documents.view", "documents.preview", "search.search", "members.invite", "folders.create", "folders.move",
+  ]);
+  const manager = await makeUser("manager", alpha.dept.id, managerRole.id);
+  // Already in the organization (a Beta member), so they can be given a role in Alpha.
+  const newcomer = await makeUser("newcomer", beta.dept.id, betaRole.id);
+  // The refusal happens before any mail is built, so no Redis connection or real send is needed.
+  const inviteDeps = { prisma, env, redis: undefined as never };
+
+  await refuses(
+    "a manager can't add someone as Dept Admin (a role beyond their own)",
+    () => department.addMember(deps, manager.actor, alpha.dept.id, newcomer.user.id, adminRole.id),
+    "role_exceeds_yours",
+  );
+  await refuses(
+    "...nor invite someone as Dept Admin",
+    () =>
+      invitations.createInvitation(inviteDeps, manager.actor, alpha.dept.id, {
+        email: `zz-acl-invitee-${stamp}@example.test`,
+        roleId: adminRole.id,
+      }),
+    "role_exceeds_yours",
+  );
+  await allows("a manager can add someone with a role inside their own (Viewer)", () =>
+    department.addMember(deps, manager.actor, alpha.dept.id, newcomer.user.id, viewerRole.id),
+  );
+  await refuses("a manager can't change anyone's role (no members.change_role)", () =>
+    department.changeMemberRole(deps, manager.actor, alpha.dept.id, newcomer.user.id, adminRole.id),
+  );
+  await allows("the super admin may grant any role", () =>
+    department.changeMemberRole(deps, superAdmin, alpha.dept.id, newcomer.user.id, adminRole.id),
+  );
+
+  console.log("\n── moving folders: the destination must be somewhere you may act (FLD-4) ──");
+  // The move route gates `folders.move` twice — at the folder and at the destination — through
+  // the engine, so these assert the predicate that second gate consults (the layering invariant:
+  // folder mutations are gated in the route, not the service).
+  const movable = await folders.createFolder(deps, manager.actor, alpha.dept.id, { name: `Movable ${stamp}` });
+  const atVault = await resolveEffectivePermissions(prisma, manager.actor, alpha.dept.id, vault.id);
+  check("the destination gate refuses a vault the mover isn't named on", atVault.permissions["folders.move"] !== true);
+  const atGeneral = await resolveEffectivePermissions(prisma, manager.actor, alpha.dept.id, general.id);
+  check("...and admits an ordinary folder they work in", atGeneral.permissions["folders.move"] === true);
+  const atRoot = await resolveEffectivePermissions(prisma, manager.actor, alpha.dept.id);
+  check("...and the department's top level", atRoot.permissions["folders.move"] === true);
+  await allows("moving under a folder they may act in works", () =>
+    folders.moveFolder(deps, manager.actor, movable.id, general.id),
+  );
+  const movedTree = await folders.listFolders(deps, manager.actor, alpha.dept.id);
+  check("...and it now sits under General", movedTree.find((f) => f.id === movable.id)?.parentFolderId === general.id);
+  await allows("...and can come back to the top level", () => folders.moveFolder(deps, manager.actor, movable.id, null));
 
   console.log("\n── destroying what you cannot see (Module 13 finding) ──");
   await documents.deleteDocument(deps, editor.actor, vaultDoc.id);

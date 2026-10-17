@@ -132,7 +132,24 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
 
   app.post(
     "/:departmentId/folders/:folderId/move",
-    { preHandler: [...inOrg, app.requirePermission("folders.move")] },
+    {
+      preHandler: [
+        ...inOrg,
+        // Allowed to move the folder where it is…
+        app.requirePermission("folders.move"),
+        // …and where it's going (the department root when parentFolderId is null). Resolved by the
+        // engine, so a confidential branch the actor isn't named on — or a folder whose override
+        // withholds moves — is refused with the same 403 as anything else, never revealing it.
+        app.requirePermission("folders.move", (request) => {
+          const { departmentId } = request.params as { departmentId: string };
+          const body = (request.body ?? {}) as { parentFolderId?: unknown };
+          return {
+            departmentId,
+            folderId: typeof body.parentFolderId === "string" ? body.parentFolderId : undefined,
+          };
+        }),
+      ],
+    },
     async (request, reply) => {
       const { folderId } = request.params as { folderId: string };
       const body = moveFolderSchema.parse(request.body);

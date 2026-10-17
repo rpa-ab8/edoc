@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkspaceShell } from "../components/WorkspaceShell";
 import { inputBase, primaryButtonBase, secondaryButtonBase } from "../components/AuthCard";
 import {
@@ -9,6 +9,7 @@ import {
   CopyIcon,
   DocumentIcon,
   FolderIcon,
+  FolderMoveIcon,
   LockIcon,
   MoreIcon,
   PencilIcon,
@@ -33,6 +34,7 @@ import {
   PeoplePicker,
 } from "../components/ConfidentialDialogs";
 import { FolderPermissionsDialog } from "../components/FolderPermissionsDialog";
+import { MoveFolderDialog } from "../components/MoveFolderDialog";
 import { useAuthStore } from "../store/authStore";
 import { searchDocuments, SHARE_QUICK_VIEWS, type QuickView, type SearchFilter } from "../lib/search";
 import { ApiRequestError } from "../lib/api";
@@ -64,6 +66,8 @@ export function DepartmentWorkspacePage() {
   const [createMembers, setCreateMembers] = useState<string[]>([]);
   const [manageFolderId, setManageFolderId] = useState<string | null>(null);
   const [permsFolderId, setPermsFolderId] = useState<string | null>(null);
+  const [movingFolderId, setMovingFolderId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const { user: authUser, organizations, currentOrganizationId } = useAuthStore();
@@ -281,6 +285,7 @@ export function DepartmentWorkspacePage() {
   const canCreateFolder = permissions["folders.create"] === true;
   const canRename = permissions["folders.rename"] === true;
   const canDelete = permissions["folders.delete"] === true;
+  const canMove = permissions["folders.move"] === true;
   // Confidential recovery is a Super-Admin / Department-Admin authority (CNF-4). Department-Admin
   // capability is holding both member-management and rules editing (see the backend constant).
   const canDeleteDoc = permissions["documents.delete"] === true;
@@ -630,6 +635,17 @@ export function DepartmentWorkspacePage() {
                   className="rounded-md p-1.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
                 >
                   <PencilIcon size={15} />
+                </button>
+              )}
+              {current && canMove && (
+                <button
+                  type="button"
+                  onClick={() => setMovingFolderId(current.id)}
+                  aria-label="Move folder"
+                  title="Move this folder"
+                  className="rounded-md p-1.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
+                >
+                  <FolderMoveIcon size={16} />
                 </button>
               )}
               {current && canDelete && (
@@ -1017,6 +1033,23 @@ export function DepartmentWorkspacePage() {
           departmentId={departmentId}
           folderId={permsFolderId}
           onClose={() => setPermsFolderId(null)}
+        />
+      )}
+      {movingFolderId && folders.find((f) => f.id === movingFolderId) && (
+        <MoveFolderDialog
+          departmentId={departmentId}
+          departmentName={department.name}
+          folder={folders.find((f) => f.id === movingFolderId)!}
+          folders={folders}
+          depthLimit={access.subfolderDepthLimit}
+          onClose={() => setMovingFolderId(null)}
+          onMoved={() => {
+            setMovingFolderId(null);
+            // The folder's place changed, so does what may be done in it: permissions re-resolve
+            // from the new parent (FLD-4), and confidentiality may have been inherited.
+            void refetchFolders();
+            void queryClient.invalidateQueries({ queryKey: ["my-permissions", departmentId] });
+          }}
         />
       )}
       {recoveryOpen && (

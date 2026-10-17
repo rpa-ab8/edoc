@@ -41,10 +41,6 @@ export function DepartmentDetailPage() {
   const { organizations, currentOrganizationId } = useAuthStore();
   const isSuperAdmin = organizations.find((o) => o.id === currentOrganizationId)?.isSuperAdmin ?? false;
 
-  // Roles are a Super-Admin concern: creating roles and editing the permission matrix is not part
-  // of a Department Admin's job (their role can't grant itself powers), so they don't see the tab.
-  const visibleTabs = isSuperAdmin ? TABS : TABS.filter((t) => t !== "Roles");
-
   const [tab, setTab] = useState<Tab>("Overview");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,8 +66,30 @@ export function DepartmentDetailPage() {
     queryFn: () => fetchMyPermissions(departmentId),
     enabled: Boolean(departmentId),
   });
-  const canInvite = access?.permissions["members.invite"] === true;
-  const canChangeRole = access?.permissions["members.change_role"] === true;
+  const perms = access?.permissions ?? {};
+  const canInvite = perms["members.invite"] === true;
+  const canChangeRole = perms["members.change_role"] === true;
+  const canRemove = perms["members.remove"] === true;
+
+  // Each tab appears only for someone who can act on it, so a manager who may only invite lands on
+  // Members instead of a page of forms that would refuse to save. Roles stay a Super-Admin concern:
+  // a Department Admin's role can't grant itself powers.
+  const canEditSettings = isSuperAdmin || perms["configuration.edit_rules"] === true;
+  const canEditTypes =
+    isSuperAdmin ||
+    [
+      "configuration.create_document_type",
+      "configuration.edit_document_type",
+      "configuration.delete_document_type",
+      "configuration.edit_metadata_schema",
+    ].some((k) => perms[k] === true);
+  const visibleTabs = TABS.filter((t) => {
+    if (t === "Roles") return isSuperAdmin;
+    if (t === "Overview" || t === "Rules") return canEditSettings;
+    if (t === "Document types") return canEditTypes;
+    return true;
+  });
+  const activeTab: Tab = visibleTabs.includes(tab) ? tab : (visibleTabs[0] ?? "Members");
 
   const { data: addableMembers } = useQuery({
     queryKey: ["addable-members", departmentId],
@@ -119,13 +137,26 @@ export function DepartmentDetailPage() {
     }
   }
 
-  if (!department) {
+  // Wait for the caller's permissions too: the tab set depends on them, and showing a guess first
+  // would flash the wrong tabs.
+  if (!department || !access) {
     return (
       <AppShell>
         <p className="text-[14.5px] text-muted">Loading department…</p>
       </AppShell>
     );
   }
+
+  // Roles this person may hand out: never one with more access than their own (the server enforces
+  // the same rule). The Super Admin may grant any role.
+  const grantableRoles = department.roles.filter(
+    (r) => isSuperAdmin || Object.entries(r.permissions).every(([key, on]) => on !== true || perms[key] === true),
+  );
+  const roleOption = (r: (typeof department.roles)[number]) => ({
+    value: r.id,
+    label: r.name,
+    hint: r.isDepartmentAdmin ? "Can administer this department" : undefined,
+  });
 
   const saveOverview = () =>
     run(async () => {
@@ -235,7 +266,7 @@ export function DepartmentDetailPage() {
               setError(null);
             }}
             className={`-mb-px border-b-2 px-4 pb-3 pt-1 text-[15px] font-semibold transition-colors ${
-              tab === t
+              activeTab === t
                 ? "border-primary text-primary"
                 : "border-transparent text-muted hover:border-line hover:text-ink"
             }`}
@@ -249,7 +280,7 @@ export function DepartmentDetailPage() {
       {error && <p className="mt-5 text-[14px] font-medium text-danger">{error}</p>}
 
       <div className="mt-6">
-        {tab === "Overview" && (
+        {activeTab === "Overview" && (
           <div className={`max-w-2xl rounded-2xl border border-line bg-surface p-7 ${CARD_SHADOW}`}>
             <div className="space-y-5">
               <div>
@@ -317,7 +348,7 @@ export function DepartmentDetailPage() {
           </div>
         )}
 
-        {tab === "Document types" && (
+        {activeTab === "Document types" && (
           <div>
             <DocumentTypeEditor value={documentTypes} onChange={setDocumentTypes} idPrefix={idPrefix} />
             <div className="mt-6 flex justify-end border-t border-line-muted pt-5">
@@ -328,7 +359,7 @@ export function DepartmentDetailPage() {
           </div>
         )}
 
-        {tab === "Roles" && catalogue && (
+        {activeTab === "Roles" && catalogue && (
           <div>
             <RoleMatrixEditor
               roles={roles}
@@ -344,7 +375,7 @@ export function DepartmentDetailPage() {
           </div>
         )}
 
-        {tab === "Rules" && (
+        {activeTab === "Rules" && (
           <div className="max-w-2xl">
             <RulesEditor value={rules} onChange={setRules} subjectTerm={department.subjectTerm} />
             <div className="mt-6 flex justify-end border-t border-line-muted pt-5">
@@ -355,7 +386,7 @@ export function DepartmentDetailPage() {
           </div>
         )}
 
-        {tab === "Members" && (
+        {activeTab === "Members" && (
           <div className="max-w-3xl">
             <div className={`overflow-hidden rounded-2xl border border-line bg-surface ${CARD_SHADOW}`}>
               <table className="w-full border-collapse text-left">
@@ -381,11 +412,10 @@ export function DepartmentDetailPage() {
                             ariaLabel={`Role for ${m.fullName}`}
                             className="w-56"
                             value={m.roleId}
-                            options={department.roles.map((r) => ({
-                              value: r.id,
-                              label: r.name,
-                              hint: r.isDepartmentAdmin ? "Can administer this department" : undefined,
-                            }))}
+                            // Grantable roles, plus the one they already hold so it still displays.
+                            options={department.roles
+                              .filter((r) => r.id === m.roleId || grantableRoles.some((g) => g.id === r.id))
+                              .map(roleOption)}
                             onChange={(roleId) =>
                               run(async () => {
                                 await apiRequest(`/departments/${departmentId}/members/${m.userId}`, {
@@ -400,7 +430,7 @@ export function DepartmentDetailPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {canChangeRole && (
+                        {canRemove && (
                           <button
                             aria-label={`Remove ${m.fullName}`}
                             onClick={() =>
@@ -438,12 +468,14 @@ export function DepartmentDetailPage() {
               <p className="mt-1 text-[14px] text-muted">
                 They get a link that expires in 7 days. If they already have an account, accepting
                 just adds this department to it.
+                {grantableRoles.length < department.roles.length &&
+                  " You can offer roles with no more access than your own."}
               </p>
               <form
                 className="mt-4 flex flex-wrap items-end gap-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const roleId = inviteRoleId || department.roles[0]?.id;
+                  const roleId = inviteRoleId || grantableRoles[0]?.id;
                   if (!roleId) return;
                   void run(async () => {
                     await createInvitation(departmentId, { email: inviteEmail.trim(), roleId });
@@ -468,12 +500,8 @@ export function DepartmentDetailPage() {
                   <Select
                     ariaLabel="Role for the invited person"
                     className="w-56"
-                    value={inviteRoleId || department.roles[0]?.id || ""}
-                    options={department.roles.map((r) => ({
-                      value: r.id,
-                      label: r.name,
-                      hint: r.isDepartmentAdmin ? "Can administer this department" : undefined,
-                    }))}
+                    value={inviteRoleId || grantableRoles[0]?.id || ""}
+                    options={grantableRoles.map(roleOption)}
                     onChange={setInviteRoleId}
                   />
                 </div>
@@ -559,11 +587,7 @@ export function DepartmentDetailPage() {
                           className="w-52"
                           placeholder="Choose a role…"
                           value={pendingMemberRole[m.userId] ?? ""}
-                          options={department.roles.map((r) => ({
-                            value: r.id,
-                            label: r.name,
-                            hint: r.isDepartmentAdmin ? "Can administer this department" : undefined,
-                          }))}
+                          options={grantableRoles.map(roleOption)}
                           onChange={(roleId) =>
                             setPendingMemberRole((prev) => ({ ...prev, [m.userId]: roleId }))
                           }

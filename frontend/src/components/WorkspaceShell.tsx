@@ -11,6 +11,7 @@ import {
   GridIcon,
   LockIcon,
   PlusIcon,
+  UsersIcon,
 } from "./icons";
 import type { FolderNode } from "../lib/folders";
 import type { DepartmentSummary } from "../lib/departments";
@@ -61,6 +62,12 @@ export function WorkspaceShell({
   const canCreateFolder = permissions["folders.create"] === true;
   const canConfigure =
     permissions["configuration.edit_metadata_schema"] === true || currentOrg?.isSuperAdmin === true;
+  // A role that can bring people in (a manager with members.invite) needs the Members page even
+  // though it can't configure the department — otherwise its permission has no screen.
+  const canManageMembers =
+    permissions["members.invite"] === true ||
+    permissions["members.change_role"] === true ||
+    permissions["members.remove"] === true;
 
   const roots = folders.filter((f) => f.parentFolderId === null);
   const childrenOf = (id: string) => folders.filter((f) => f.parentFolderId === id);
@@ -257,13 +264,22 @@ export function WorkspaceShell({
         </div>
 
         <div className="mt-auto border-t border-rail-line px-4 py-3">
-          {canConfigure && (
+          {canConfigure ? (
             <Link
               to={`/departments/${department.id}`}
               className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium text-rail-muted transition-colors hover:bg-rail-raised hover:text-rail-ink"
             >
               <GearIcon size={17} /> Department settings
             </Link>
+          ) : (
+            canManageMembers && (
+              <Link
+                to={`/departments/${department.id}`}
+                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium text-rail-muted transition-colors hover:bg-rail-raised hover:text-rail-ink"
+              >
+                <UsersIcon size={17} /> Members
+              </Link>
+            )
           )}
           {currentOrg?.isSuperAdmin && (
             <>
