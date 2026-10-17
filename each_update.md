@@ -2518,3 +2518,16 @@ migrations are forward-only), backup/restore, secret rotation table, monitoring,
 **Not verified:** the off-server copy to R2 (no backup bucket/keys yet), Let's Encrypt issuance
 (needs the real domain), the GitHub Actions run itself. **Not built:** Sentry (Tech Stack §3.10) —
 errors go to container logs only.
+
+## 2026-10-17 — Step-by-step production deployment guide
+
+Added `docs/DMS_Deployment_Guide.md` for the user to deploy themselves: every step marked Windows /
+Server / Browser with the expected result after each. Covers: pushing to a private GitHub repo +
+release tag; DigitalOcean droplet (`s-4vcpu-8gb`), cloud firewall, alerts; server hardening (`deploy`
+user, root + password SSH off via `00-hardening.conf` so it wins over cloud-init, swap, unattended
+upgrades); Docker; Cloudflare DNS (grey cloud), Brevo domain authentication + API key, two R2 buckets
+with separately scoped tokens and a 60-day lifecycle on backups; read-only GitHub deploy key; filling
+`.env.production` (secrets generated with `openssl`); build/start with expected `dc ps` states;
+first-organization bootstrap (single-use invite code via psql → register → create org → verify →
+onboarding storage/department/invites, with the exact UI labels); a 9-point verification table;
+uptime monitoring; routine; troubleshooting; final checklist. `deploy/README.md` now points to it.

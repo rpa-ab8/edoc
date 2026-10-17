@@ -1,5 +1,7 @@
 # DMS — Production Runbook
 
+> **Deploying for the first time?** Follow the step-by-step guide in `docs/DMS_Deployment_Guide.md`. This runbook is the day-to-day operations reference.
+
 One server, everything in Docker Compose (Tech Stack §3.9). Sizing and cost: `docs/DMS_Budget_Plan_s-4vcpu-8gb.md`.
 
 ```
