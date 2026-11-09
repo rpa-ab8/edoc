@@ -263,23 +263,38 @@ export async function login(
   context: { deviceInfo?: string; ipAddress?: string },
 ) {
   const { prisma, redis, env } = deps;
-  const lockKey = `login:lock:${input.email}`;
-  const failKey = `login:fail:${input.email}`;
+  // Lockout is keyed on (email, IP), never on the email alone (SECURITY_AUDIT.md M-3): counting by
+  // email let anyone who knew an address keep its owner locked out with 5 requests per 15 minutes.
+  // Now an attacker locks only their own IP for that account. A distributed attack (many IPs) is
+  // caught by a second, per-account counter: past LOGIN_MAX_ATTEMPTS_PER_ACCOUNT failures in the
+  // window, only IPs this account signed in from recently may keep trying — so the owner can still
+  // get in from their usual place while strangers are shut out.
+  const ip = context.ipAddress ?? "unknown";
+  const windowSeconds = env.LOGIN_LOCKOUT_MINUTES * 60;
+  const pairLockKey = `login:lock:${input.email}:${ip}`;
+  const pairFailKey = `login:fail:${input.email}:${ip}`;
+  const accountFailKey = `login:fail-account:${input.email}`;
+  const tooMany = () =>
+    new AuthError(429, "too_many_attempts", `Too many failed attempts. Try again in ${env.LOGIN_LOCKOUT_MINUTES} minutes.`);
 
-  const locked = await redis.get(lockKey);
-  if (locked) {
-    throw new AuthError(
-      429,
-      "too_many_attempts",
-      `Too many failed attempts. Try again in ${env.LOGIN_LOCKOUT_MINUTES} minutes.`,
-    );
+  const [pairLocked, accountFailures] = await Promise.all([redis.get(pairLockKey), redis.get(accountFailKey)]);
+  if (pairLocked) throw tooMany();
+  if (Number(accountFailures ?? 0) >= env.LOGIN_MAX_ATTEMPTS_PER_ACCOUNT) {
+    const trustedSince = new Date(Date.now() - env.LOGIN_TRUSTED_IP_DAYS * 24 * 60 * 60 * 1000);
+    const trusted =
+      context.ipAddress !== undefined &&
+      (await prisma.loginAttempt.findFirst({
+        where: { email: input.email, ipAddress: context.ipAddress, succeeded: true, attemptedAt: { gte: trustedSince } },
+        select: { id: true },
+      })) !== null;
+    if (!trusted) throw tooMany();
   }
 
   const recordFailure = async () => {
-    const attempts = await redis.incr(failKey);
-    await redis.expire(failKey, env.LOGIN_LOCKOUT_MINUTES * 60);
-    if (attempts >= env.LOGIN_MAX_ATTEMPTS) {
-      await redis.set(lockKey, "1", "EX", env.LOGIN_LOCKOUT_MINUTES * 60);
+    const [pairAttempts] = await Promise.all([redis.incr(pairFailKey), redis.incr(accountFailKey)]);
+    await Promise.all([redis.expire(pairFailKey, windowSeconds), redis.expire(accountFailKey, windowSeconds)]);
+    if (pairAttempts >= env.LOGIN_MAX_ATTEMPTS) {
+      await redis.set(pairLockKey, "1", "EX", windowSeconds);
     }
     await prisma.loginAttempt.create({
       data: { email: input.email, ipAddress: context.ipAddress, succeeded: false },
@@ -301,7 +316,9 @@ export async function login(
     throw new AuthError(401, "invalid_credentials", "Invalid email or password.");
   }
 
-  await redis.del(failKey, lockKey);
+  // Clears only this IP's counter. The per-account counter is left to expire: the owner signing in
+  // must not reset the ceiling for an attacker still working through other IPs.
+  await redis.del(pairFailKey, pairLockKey);
   await prisma.loginAttempt.create({
     data: { email: input.email, ipAddress: context.ipAddress, succeeded: true, userId: user.id },
   });
@@ -380,6 +397,18 @@ export async function refresh(
   const record = await prisma.refreshToken.findUnique({ where: { tokenHash: hash } });
   if (!record || record.revokedAt || record.expiresAt < new Date()) {
     throw new AuthError(401, "invalid_refresh_token", "Session expired, please sign in again.");
+  }
+
+  // A disabled account can't extend its session (SECURITY_AUDIT.md M-2): login was the only place
+  // `user.status` was enforced, so a disabled account kept refreshing for the token's 30-day life.
+  // Every one of its sessions is ended, not just this one.
+  const account = await prisma.user.findUnique({ where: { id: record.userId }, select: { status: true } });
+  if (!account || account.status !== "active") {
+    await prisma.refreshToken.updateMany({
+      where: { userId: record.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    throw new AuthError(401, "account_disabled", "This account has been disabled.");
   }
 
   await prisma.refreshToken.update({

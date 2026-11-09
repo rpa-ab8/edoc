@@ -81,10 +81,14 @@ export function UploadPanel({
   subject: string;
   documentTypes: DocType[];
   initialFiles?: File[];
-  onClose: () => void;
+  /** `filedToFolderId` is the folder the most recent file landed in, so the caller can take the user
+   *  there — otherwise a file sent to a different folder than the one open looks like it vanished. */
+  onClose: (filedToFolderId?: string) => void;
   onUploaded: () => void;
 }) {
   const [folderId, setFolderId] = useState(initialFolderId ?? folders[0]?.id ?? "");
+  const [filedToFolderId, setFiledToFolderId] = useState<string | undefined>(undefined);
+  const close = () => onClose(filedToFolderId);
   const [typeId, setTypeId] = useState(documentTypes[0]?.id ?? "");
   const [shared, setShared] = useState<FieldValues>({});
   const [items, setItems] = useState<UploadItem[]>(() => initialFiles.map(toItem));
@@ -124,6 +128,8 @@ export function UploadPanel({
 
   async function uploadOne(item: UploadItem, resolution?: DuplicateResolution, duplicateOfDocumentId?: string) {
     if (!type || !folderId) return;
+    const targetFolderId = folderId;
+    const targetName = folders.find((f) => f.id === targetFolderId)?.name;
     patch(item.key, { status: "uploading", message: undefined });
     try {
       const result = await uploadDocument(departmentId, folderId, {
@@ -135,12 +141,16 @@ export function UploadPanel({
       });
       if (result.action === "skipped") {
         patch(item.key, { status: "skipped", message: "Skipped — not uploaded" });
+      } else if (result.action === "new_version") {
+        // A new version joins the existing document wherever that lives — not necessarily here.
+        patch(item.key, { status: "done", ref: result.document?.documentRef, message: "Added as a new version" });
       } else {
         patch(item.key, {
           status: "done",
           ref: result.document?.documentRef,
-          message: result.action === "new_version" ? "Added as a new version" : undefined,
+          message: targetName ? `Filed in ${targetName}` : undefined,
         });
+        setFiledToFolderId(targetFolderId);
       }
       onUploaded();
     } catch (err) {
@@ -171,7 +181,7 @@ export function UploadPanel({
   return (
     <div
       className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/40 p-4 backdrop-blur-sm sm:p-8"
-      onClick={onClose}
+      onClick={close}
     >
       <div
         className="w-full max-w-2xl animate-card-in rounded-2xl border border-line bg-surface shadow-card-lg"
@@ -189,7 +199,7 @@ export function UploadPanel({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             aria-label="Close"
             className="rounded-lg p-2 text-subtle transition-colors hover:bg-surface-muted hover:text-ink"
           >
@@ -366,7 +376,7 @@ export function UploadPanel({
             {readyCount > 0 && `${readyCount} ready`}
           </p>
           <div className="flex gap-2.5">
-            <button type="button" onClick={onClose} className={`${secondaryButtonBase} px-5`}>
+            <button type="button" onClick={close} className={`${secondaryButtonBase} px-5`}>
               {anyResolved && readyCount === 0 ? "Done" : "Cancel"}
             </button>
             {hasTypes && hasFolders && (

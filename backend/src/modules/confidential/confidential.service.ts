@@ -77,6 +77,21 @@ async function requireVaultMember(deps: Deps, actor: PermissionActor, folderId: 
   return root;
 }
 
+/**
+ * Only the vault's owner manages its named list (SECURITY_AUDIT.md M-6; product decision 2026-11-07,
+ * recorded in Feature Spec §11.1). Other members have access, nothing more: they can't widen the
+ * vault or push colleagues out. A non-member still gets "not found" (the vault stays invisible);
+ * a member who isn't the owner gets a real 403, because the vault is no secret to them.
+ */
+async function requireVaultOwner(deps: Deps, actor: PermissionActor, folderId: string): Promise<FolderRow> {
+  const root = await requireVaultMember(deps, actor, folderId);
+  const me = await isMember(deps, root.id, actor.userId);
+  if (!me?.isOwner) {
+    throw new ConfidentialError(403, "not_vault_owner", "Only this folder's owner can change who has access.");
+  }
+  return root;
+}
+
 // ─────────────────────────── member management (CNF-1) ───────────────────────────
 
 export interface ConfidentialMemberView {
@@ -96,6 +111,8 @@ export async function listMembers(deps: Deps, actor: PermissionActor, folderId: 
   return {
     folderId: root.id,
     folderName: root.name,
+    // Whether the caller may add/remove people — only the owner (M-6) — so the UI shows the controls.
+    canManage: rows.some((r) => r.user.id === actor.userId && r.isOwner),
     members: rows.map(
       (r): ConfidentialMemberView => ({
         userId: r.user.id,
@@ -108,7 +125,7 @@ export async function listMembers(deps: Deps, actor: PermissionActor, folderId: 
 }
 
 export async function addMember(deps: Deps, actor: PermissionActor, folderId: string, userId: string) {
-  const root = await requireVaultMember(deps, actor, folderId);
+  const root = await requireVaultOwner(deps, actor, folderId);
 
   const user = await deps.prisma.user.findFirst({
     where: { id: userId, memberships: { some: { organizationId: actor.organizationId } } },
@@ -132,20 +149,23 @@ export async function addMember(deps: Deps, actor: PermissionActor, folderId: st
 }
 
 export async function removeMember(deps: Deps, actor: PermissionActor, folderId: string, userId: string) {
-  const root = await requireVaultMember(deps, actor, folderId);
+  const root = await requireVaultOwner(deps, actor, folderId);
 
   const target = await isMember(deps, root.id, userId);
   if (!target) throw new ConfidentialError(404, "not_a_member", "They're not on this folder's list.");
   // The owner cannot be removed — the first half of the anti-orphaning guardrail (CNF-1).
   if (target.isOwner) throw new ConfidentialError(400, "cannot_remove_owner", "The folder's owner can't be removed.");
 
+  const removed = await deps.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
   await deps.prisma.confidentialMember.delete({ where: { id: target.id } });
   await logAuditEvent(deps.prisma, {
     organizationId: actor.organizationId,
     actorUserId: actor.userId,
     action: "permission_change",
     departmentId: root.departmentId,
-    targetDescription: `Removed a member from confidential folder ${root.name}`,
+    // Names who lost access, as the add event names who gained it. The event is confidential-flagged,
+    // so only the compliance-audit role sees it (CNF-5).
+    targetDescription: `Removed ${removed?.email ?? "a member"} from confidential folder ${root.name}`,
     isConfidential: true,
   });
   return listMembers(deps, actor, root.id);

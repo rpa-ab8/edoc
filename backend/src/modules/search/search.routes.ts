@@ -18,6 +18,9 @@ const searchSchema = z.object({
   documentTypeId: z.string().uuid().optional(),
   quickView: z.enum(["recent", "uploaded_by_me", "shared_with_me", "trash"]).optional(),
   filters: z.array(filterSchema).max(20).optional(),
+  // Standard Upload Date filter (SRCH-6) — validated (real dates, From <= To) in the service.
+  uploadedFrom: z.string().max(10).optional(),
+  uploadedTo: z.string().max(10).optional(),
   limit: z.number().int().positive().max(200).optional(),
 });
 
@@ -44,11 +47,20 @@ export default async function searchRoutes(app: FastifyInstance, opts: { prisma:
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { departmentId } = request.params as { departmentId: string };
       const body = searchSchema.parse(request.body ?? {});
-      const results = await searchService.searchDocuments(deps, actorFrom(request), {
-        departmentId,
-        ...body,
-      });
-      return reply.send({ results });
+      try {
+        const results = await searchService.searchDocuments(deps, actorFrom(request), {
+          departmentId,
+          ...body,
+          uploadedFrom: body.uploadedFrom || undefined,
+          uploadedTo: body.uploadedTo || undefined,
+        });
+        return reply.send({ results });
+      } catch (err) {
+        if (err instanceof searchService.SearchError) {
+          return reply.code(err.statusCode).send({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
     },
   );
 }

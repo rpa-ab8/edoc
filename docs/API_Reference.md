@@ -1,0 +1,1006 @@
+# Edoc — API Reference
+
+> **Audience:** developers integrating with or maintaining the Edoc backend.
+> **Source of truth:** the route files in `backend/src/modules/*/*.routes.ts` and their services. This
+> document was written from the code (2026-11-07). If the two ever disagree, the code wins — fix this file.
+> Companion docs: [Developer Guide](developer/README.md) · [Database schema](developer/03_Database_Schema.md) ·
+> [Security & permissions](developer/04_Security_and_Permissions.md).
+
+---
+
+## Contents
+
+1. [Conventions](#1-conventions)
+2. [Authentication & the guard chain](#2-authentication--the-guard-chain)
+3. [Endpoint index](#3-endpoint-index)
+4. [Auth](#4-auth--auth)
+5. [Organizations](#5-organizations--organizations)
+6. [Storage](#6-storage--storage)
+7. [Departments, document types, roles, members](#7-departments--departments)
+8. [Invitations](#8-invitations)
+9. [Folders & folder permissions](#9-folders)
+10. [Documents, viewer, versions, trash](#10-documents)
+11. [Upload](#11-upload)
+12. [Search](#12-search)
+13. [Sharing & external links](#13-sharing)
+14. [Confidential folders](#14-confidential-folders)
+15. [Retention & Legal Hold](#15-retention--legal-hold)
+16. [Audit](#16-audit)
+17. [Health](#17-health)
+18. [Error code catalogue](#18-error-code-catalogue)
+
+---
+
+## 1. Conventions
+
+| Topic | Rule |
+|---|---|
+| **Base URL** | Dev: `http://localhost:4000`. Prod: same origin as the web app under **`/api`** — Caddy's `handle_path /api/*` strips the prefix and proxies to `api:4000`, so `GET https://<site>/api/health` reaches the route `/health`. All paths below are written without the prefix. The frontend reads the base from `VITE_API_URL`. |
+| **Format** | JSON request and response bodies (`Content-Type: application/json`), except: uploads (`multipart/form-data`), file downloads (raw bytes), the audit export (`text/csv`). |
+| **IDs** | All entity IDs are UUID v4 strings. The human document ID (`documentRef`, e.g. `HR-CON-2026-00142`) is a separate, immutable field. |
+| **Dates** | Timestamps are ISO-8601 UTC strings (`2026-11-07T10:29:20.213Z`). Calendar dates (Upload Date filters, retention dates) are `YYYY-MM-DD` and are read **in the organization's time zone** (`organization.timeZone`). |
+| **Big numbers** | Byte counts that can exceed 2^53 (`usedBytes`, `quotaBytes`, `storageUsedBytes`) are returned as **strings**. |
+| **CORS** | Only `CORS_ORIGIN` is allowed, with `credentials: true` (the refresh cookie must travel). |
+| **Not-found vs forbidden** | Something the caller may not *see* (a confidential folder, a document they can't view, another department's folder) is answered `404 …_not_found`, never `403` — a distinct code would confirm it exists. `403` is used only when the caller can already see the thing but may not perform the action. |
+| **Idempotency** | Revoking an already-revoked share, and re-saving an unchanged role, succeed without changes. Daily retention jobs are idempotent. Everything else is not idempotent. |
+
+### 1.1 Error response shape
+
+Every non-2xx JSON response has this shape:
+
+```json
+{ "error": "machine_readable_code", "message": "A sentence you can show a user.", "details": { } }
+```
+
+- `error` — stable snake_case code. **Branch on this, never on `message`.** Full list: [§18](#18-error-code-catalogue).
+- `message` — human-readable, safe to display.
+- `details` — optional, present on:
+  - `400 validation_error` → `{ "<field>": ["message", …] }` (zod field errors).
+  - `409 duplicate_detected` (upload) → `{ "duplicates": DuplicateMatch[] }`.
+  - `409 confirmation_required` (retention) → `{ "preview": AutoDeletePreview }`.
+
+| Status | Meaning here |
+|---|---|
+| 400 | Invalid input (`validation_error`) or a business rule refused it. |
+| 401 | No/invalid/expired access token, disabled account, revoked org access, or sign-in required. |
+| 403 | Authenticated and the target is visible, but the action isn't allowed. |
+| 404 | Doesn't exist **or** you may not know it exists. |
+| 409 | Conflicts with current state (duplicate name, already in trash, legal hold, …). |
+| 410 | Invitation expired or revoked. |
+| 413 | Upload larger than `MAX_UPLOAD_BYTES` (default 120 MB). |
+| 429 | Rate limited (`rate_limited`), login locked (`too_many_attempts`) or upload slots busy (`upload_busy`). |
+| 500 | `internal_error` (logged server-side) or unreadable storage credentials. |
+
+### 1.2 Rate limits
+
+Opt-in per route, keyed by client IP (`lib/rate-limits.ts`). There is deliberately **no global limit**
+(an office shares one public IP).
+
+| Profile | Limit | Used by |
+|---|---|---|
+| `sensitive` | 10 / min | `register`, `resend-verification`, `forgot-password`, `reset-password`, invitation accept |
+| `login` | 30 / min | `login`, `verify-email` |
+| `publicRead` | 120 / min | invitation preview, external link open + file |
+
+Over the limit → `429 { "code": "rate_limited", "message": "Too many attempts. Try again in …" }`
+(note: this one body uses `code`, generated by `@fastify/rate-limit`).
+
+Login also has an account-lockout layer independent of the rate limit — see [§4 login](#post-authlogin).
+
+---
+
+## 2. Authentication & the guard chain
+
+### 2.1 Tokens
+
+| Token | Where | Lifetime | Notes |
+|---|---|---|---|
+| **Access token** (JWT, HS256) | `Authorization: Bearer <jwt>` header. Kept **in memory** by the web app, never in storage. | `JWT_ACCESS_EXPIRES_IN` (15 min) | Claims: `sub` (user id), `emailVerified`, `organizationId?`, `isSuperAdmin?`. Claims are a *hint*: the server re-checks account status, org membership and Super Admin on every request. |
+| **Refresh token** | httpOnly cookie `dms_refresh` (`SameSite=Lax`, `Secure` in prod, `Path=/`) | `REFRESH_TOKEN_TTL_DAYS` (30 days) | Opaque 256-bit random; only its SHA-256 hash is stored (`refresh_token`). **Rotated on every use**. |
+
+Flow: `login` → access token + cookie. When a call returns `401`, the client calls `POST /auth/refresh`
+(sending its `currentOrganizationId`) once, then retries the original request (`frontend/src/lib/api.ts`).
+
+### 2.2 Guards
+
+Each endpoint lists its guard chain using these labels (implemented in `backend/src/plugins/authenticate.ts`):
+
+| Label | Guard | Fails with |
+|---|---|---|
+| **Public** | none | — |
+| **Auth** | `authenticate`: valid JWT; account `status = active`; if the token names an org, the user still **owns it or holds an active membership in it**; `isSuperAdmin` re-derived from the DB. | `401 unauthorized` / `401 account_disabled` / `401 session_revoked` |
+| **Verified** | `requireVerifiedEmail`: `emailVerified` claim is true | `403 email_not_verified` |
+| **Org** | `requireOrganization`: token carries an `organizationId` | `400 no_organization_selected` |
+| **SA** | `requireSuperAdmin`: caller owns the current org | `403 forbidden` |
+| **Perm(`key`)** | `requirePermission(key)`: the permission engine grants `key` for the department (and folder) taken from the route params/body | `403 forbidden` (identical whether you lack the key, aren't a member, or the folder is confidential) |
+| **Svc** | the permission/ownership check happens inside the service (identity-based routes, e.g. by document ID) | as documented per endpoint |
+
+Shorthand: **`std`** = `Auth + Verified + Org` (the default chain for almost every business endpoint).
+
+---
+
+## 3. Endpoint index
+
+| # | Method | Path | Guards | Permission / rule |
+|---|---|---|---|---|
+| | | **Auth** | | |
+| 1 | GET | `/auth/signup-mode` | Public | — |
+| 2 | POST | `/auth/register` | Public · rl:sensitive | — |
+| 3 | POST | `/auth/verify-email` | Public · rl:login | — |
+| 4 | POST | `/auth/resend-verification` | Auth · rl:sensitive | — |
+| 5 | POST | `/auth/organizations` | Auth | signup mode / invite code |
+| 6 | POST | `/auth/login` | Public · rl:login | lockout |
+| 7 | POST | `/auth/select-organization` | Auth | must belong to org |
+| 8 | GET | `/auth/me` | Auth | — |
+| 9 | POST | `/auth/refresh` | cookie | — |
+| 10 | POST | `/auth/logout` | cookie | — |
+| 11 | POST | `/auth/logout-all` | Auth | — |
+| 12 | POST | `/auth/forgot-password` | Public · rl:sensitive | — |
+| 13 | POST | `/auth/reset-password` | Public · rl:sensitive | — |
+| | | **Organizations** | | |
+| 14 | GET | `/organizations/current` | Auth+Org | — |
+| 15 | PATCH | `/organizations/current` | Auth+Org+SA | — |
+| 16 | GET | `/organizations/current/dashboard` | Auth+Org+SA | — |
+| 17 | GET | `/organizations/current/members` | Auth+Org+SA | — |
+| 18 | GET | `/organizations/current/users` | std | — |
+| 19 | GET | `/organizations/current/invitations` | Auth+Org+SA | — |
+| 20 | PATCH | `/organizations/current/members/:userId/disable` | Auth+Org+SA | not the owner |
+| 21 | PATCH | `/organizations/current/members/:userId/enable` | Auth+Org+SA | — |
+| 22 | POST | `/organizations/current/members/:userId/reset-password` | Auth+Org+SA | — |
+| | | **Storage** | | |
+| 23 | GET | `/storage/config` | Auth+Org | — |
+| 24 | POST | `/storage/config` | Auth+Org+SA | storage policy |
+| 25 | POST | `/storage/config/test` | Auth+Org+SA | storage policy |
+| | | **Departments** | | |
+| 26 | GET | `/departments/permission-catalogue` | std | — |
+| 27 | GET | `/departments/templates` | std | — |
+| 28 | GET | `/departments` | std | lists only your departments (all for SA) |
+| 29 | GET | `/departments/:departmentId` | std | Svc: `documents.view` **or** `members.change_role` |
+| 30 | POST | `/departments` | std+SA | — |
+| 31 | PATCH | `/departments/:departmentId` | std | Svc: SA for `name`/`status`; else `configuration.edit_rules` |
+| 32 | POST | `/departments/:departmentId/document-types` | std | Svc: `configuration.create_document_type` |
+| 33 | PUT | `/departments/:departmentId/document-types/:documentTypeId` | std | Svc: `configuration.edit_document_type` |
+| 34 | DELETE | `/departments/:departmentId/document-types/:documentTypeId` | std | Svc: `configuration.delete_document_type` |
+| 35 | POST | `/departments/:departmentId/roles` | std | Svc: `members.change_role` + within reach |
+| 36 | POST | `/departments/:departmentId/roles/:roleId/copy` | std | Svc: `members.change_role` + within reach |
+| 37 | PUT | `/departments/:departmentId/roles/:roleId` | std | Svc: `members.change_role` + within reach |
+| 38 | DELETE | `/departments/:departmentId/roles/:roleId` | std | Svc: `members.change_role` + within reach |
+| 39 | GET | `/departments/:departmentId/addable-members` | std | Svc: `members.invite` |
+| 40 | POST | `/departments/:departmentId/members` | std | Svc: `members.invite` + can grant role |
+| 41 | PATCH | `/departments/:departmentId/members/:userId` | std | Svc: `members.change_role` + can grant + target within reach |
+| 42 | DELETE | `/departments/:departmentId/members/:userId` | std | Svc: `members.remove` + target within reach |
+| | | **Invitations** | | |
+| 43 | GET | `/departments/:departmentId/invitations` | std+Perm(`members.invite`) | — |
+| 44 | POST | `/departments/:departmentId/invitations` | std+Perm(`members.invite`) | can grant role |
+| 45 | POST | `/departments/:departmentId/invitations/:invitationId/resend` | std+Perm(`members.invite`) | — |
+| 46 | DELETE | `/departments/:departmentId/invitations/:invitationId` | std+Perm(`members.invite`) | — |
+| 47 | GET | `/invitations/:token` | Public · rl:publicRead | — |
+| 48 | POST | `/invitations/:token/accept` | optional Bearer · rl:sensitive | — |
+| | | **Folders** | | |
+| 49 | GET | `/departments/:departmentId/folders` | std+Perm(`documents.view`) | — |
+| 50 | GET | `/departments/:departmentId/my-permissions` | std | — |
+| 51 | GET | `/departments/:departmentId/folders/:folderId/path` | std+Perm(`documents.view`, folder) | — |
+| 52 | POST | `/departments/:departmentId/folders` | std+Perm(`folders.create`) | — |
+| 53 | PATCH | `/departments/:departmentId/folders/:folderId` | std+Perm(`folders.rename`, folder) | — |
+| 54 | POST | `/departments/:departmentId/folders/:folderId/move` | std+Perm(`folders.move`, source)+Perm(`folders.move`, destination) | — |
+| 55 | DELETE | `/departments/:departmentId/folders/:folderId` | std+Perm(`folders.delete`, folder) | — |
+| 56 | GET | `/departments/:departmentId/folders/:folderId/permissions` | std+Perm(`configuration.edit_rules`, dept) | — |
+| 57 | PUT | `/departments/:departmentId/folders/:folderId/permissions/:roleId` | std+Perm(`configuration.edit_rules`, dept) | — |
+| 58 | DELETE | `/departments/:departmentId/folders/:folderId/permissions/:roleId` | std+Perm(`configuration.edit_rules`, dept) | — |
+| | | **Documents** | | |
+| 59 | GET | `/documents?departmentId&folderId` | std+Perm(`documents.view`, folder) | — |
+| 60 | GET | `/documents/lookup?ref=` | std | Svc: `documents.view` |
+| 61 | GET | `/documents/:documentId` | std | Svc: `documents.view` (or a share) |
+| 62 | GET | `/documents/:documentId/activity` | std | Svc: `documents.version_history` |
+| 63 | GET | `/documents/:documentId/file` | std | Svc: `documents.preview` / `documents.download` |
+| 64 | POST | `/documents/:documentId/versions/:versionId/restore` | std | Svc: `documents.upload_version` |
+| 65 | PATCH | `/documents/:documentId/metadata` | std | Svc: `documents.edit_metadata` |
+| 66 | DELETE | `/documents/:documentId` | std | Svc: `documents.delete` |
+| 67 | POST | `/documents/:documentId/restore` | std | Svc: `documents.restore` (+DA if auto-deleted) |
+| 68 | POST | `/documents/:documentId/purge` | std | Svc: Department Admin |
+| 69 | GET | `/departments/:departmentId/trash` | std+Perm(`documents.restore`) | — |
+| 70 | POST | `/departments/:departmentId/trash/empty` | std | Svc: Department Admin |
+| 71 | GET | `/departments/:departmentId/documents/needs-details` | std+Perm(`documents.view`) | — |
+| | | **Upload** | | |
+| 72 | POST | `/departments/:departmentId/folders/:folderId/documents/upload` | std+Perm(`documents.upload`, folder) | upload slot |
+| 73 | POST | `/documents/:documentId/versions/upload` | std | Svc: `documents.upload_version`; upload slot |
+| | | **Search** | | |
+| 74 | POST | `/departments/:departmentId/search` | std+Perm(`search.search`) | — |
+| | | **Sharing** | | |
+| 75 | POST | `/documents/:documentId/shares` | std | Svc: `sharing.share` (+ more per type) |
+| 76 | GET | `/documents/:documentId/shares` | std | Svc: `sharing.share` |
+| 77 | GET | `/shares/with-me` | std | — |
+| 78 | GET | `/shares/by-me` | std | — |
+| 79 | PATCH | `/shares/:shareId` | std | Svc: you created it |
+| 80 | DELETE | `/shares/:shareId` | std | Svc: you created it |
+| 81 | POST | `/shares/:shareId/dismiss` | std | Svc: you're the direct recipient |
+| 82 | GET | `/departments/:departmentId/shares/pending` | std+Perm(`sharing.cross_department_share`) | — |
+| 83 | POST | `/departments/:departmentId/shares/:shareId/respond` | std+Perm(`sharing.cross_department_share`) | — |
+| 84 | GET | `/links/:token` | Public · rl:publicRead | link re-validated |
+| 85 | GET | `/links/:token/file` | Public · rl:publicRead | link re-validated |
+| | | **Confidential** | | |
+| 86 | GET | `/folders/:folderId/confidential/members` | std | Svc: on the named list |
+| 87 | POST | `/folders/:folderId/confidential/members` | std | Svc: vault **owner** |
+| 88 | DELETE | `/folders/:folderId/confidential/members/:userId` | std | Svc: vault **owner** |
+| 89 | GET | `/departments/:departmentId/confidential/orphaned` | std | Svc: SA or Department Admin |
+| 90 | GET | `/departments/:departmentId/confidential/recoveries` | std | Svc: SA or Department Admin |
+| 91 | POST | `/departments/:departmentId/confidential/folders/:folderId/recovery` | std | Svc: SA or Department Admin |
+| 92 | POST | `/departments/:departmentId/confidential/recoveries/:recoveryId/approve` | std | Svc: SA or Department Admin |
+| | | **Retention** | | |
+| 93 | GET | `/departments/:departmentId/retention` | std | Svc: `retention.manage_auto_delete` |
+| 94 | POST | `/departments/:departmentId/retention/preview` | std | Svc: `retention.manage_auto_delete` |
+| 95 | PUT | `/departments/:departmentId/retention` | std | Svc: `retention.manage_auto_delete` |
+| 96 | GET | `/departments/:departmentId/retention/upcoming` | std | Svc: `retention.view_upcoming_deletions` |
+| 97 | GET | `/departments/:departmentId/legal-holds` | std | Svc: `retention.manage_legal_hold` |
+| 98 | POST | `/documents/:documentId/legal-hold` | std | Svc: hold authority |
+| 99 | POST | `/departments/:departmentId/folders/:folderId/legal-hold` | std | Svc: hold authority |
+| 100 | DELETE | `/legal-holds/:holdId` | std | Svc: hold authority |
+| | | **Audit** | | |
+| 101 | GET | `/departments/:departmentId/audit` | std+Perm(`audit.view_audit`) | — |
+| 102 | GET | `/departments/:departmentId/audit/export` | std+Perm(`audit.export_audit`) | — |
+| | | **Health** | | |
+| 103 | GET | `/health` | Public | — |
+
+"Department Admin" (DA) = an **active member** of the department whose role has both
+`members.change_role` and `configuration.edit_rules` (`hasDepartmentAdminCapability`). The Super Admin is
+*not* a Department Admin unless they also hold such a role.
+
+---
+
+## 4. Auth — `/auth`
+
+Source: `modules/auth/auth.routes.ts`, `auth.service.ts`, `auth.schemas.ts`.
+
+### `GET /auth/signup-mode`
+Public. Returns the global signup mode (row `signup_setting.id = 1`, default `invite_code`).
+```json
+{ "mode": "open" | "invite_code" | "disabled" }
+```
+
+### `POST /auth/register`
+Public, rate limit `sensitive`. Creates a user (unverified), emails a verification link
+(`${FRONTEND_URL}/verify-email?token=…`, valid `EMAIL_VERIFICATION_TTL_HOURS` = 24 h), and starts a session.
+
+Body:
+```json
+{ "fullName": "string (1–200)", "email": "email (lower-cased)", "password": "string (≥ 8)" }
+```
+`201` → `{ "user": { id, email, fullName, emailVerified: false }, "accessToken": "jwt" }` + sets `dms_refresh`.
+Errors: `409 email_already_registered`.
+
+Registration does **not** create an organization — see `POST /auth/organizations`.
+
+### `POST /auth/verify-email`
+Public, rate limit `login`. Body `{ "token": "string" }`. Marks the token used and sets `user.emailVerifiedAt`.
+`200 { "verified": true }`. Errors: `400 invalid_token` (unknown, used or expired).
+The client must refresh its access token afterwards to get `emailVerified: true` in the claims.
+
+### `POST /auth/resend-verification`
+Auth, rate limit `sensitive`. Invalidates outstanding verification tokens and emails a new one.
+`200 { "sent": true }`. Errors: `400 already_verified`.
+
+### `POST /auth/organizations`
+Auth (verification **not** required). Creates an organization owned by the caller (the caller becomes its
+**Super Admin** — ownership is `organization.createdByUserId`, there is no membership row).
+
+Body: `{ "name": "1–200", "industry"?: "≤200", "inviteCode"?: "string" }`
+
+Behaviour by `signup_setting.mode`:
+
+| Mode | Behaviour |
+|---|---|
+| `disabled` | `403 signup_disabled` |
+| `invite_code` | `inviteCode` required (`400 invite_code_required`); must exist in `signup_invite_code`, be `active`, not expired, and under `maxUses` (`400 invalid_invite_code`). `usedCount` is incremented. |
+| `open` | no code needed |
+
+`201 { "organization": Organization, "accessToken": "jwt (org-scoped, isSuperAdmin: true)" }`.
+Audit: `config_change` "Organization created". There is **no API to create invite codes** — insert rows in
+`signup_invite_code` directly (see [Getting started](developer/02_Getting_Started.md#first-organization)).
+
+### `POST /auth/login`
+Public, rate limit `login`. Body: `{ "email": "email", "password": "string ≥1" }`.
+
+`200`:
+```json
+{
+  "user": { "id", "email", "fullName", "emailVerified" },
+  "organizations": [ { "id", "name", "isSuperAdmin" } ],
+  "autoSelectedOrganizationId": "uuid | undefined",
+  "accessToken": "jwt"
+}
+```
++ sets `dms_refresh`. If the user belongs to exactly one organization, the token is already scoped to it
+(`autoSelectedOrganizationId`); otherwise call `select-organization`.
+
+Errors: `401 invalid_credentials` (unknown email or wrong password — identical), `403 account_disabled`,
+`429 too_many_attempts`.
+
+**Lockout** (Redis, `auth.service.ts login`, SECURITY_AUDIT M-3):
+- `LOGIN_MAX_ATTEMPTS` (5) failures for the same **(email, IP)** within `LOGIN_LOCKOUT_MINUTES` (15) lock that pair only.
+- Across all IPs, after `LOGIN_MAX_ATTEMPTS_PER_ACCOUNT` (50) failures in the window, only IPs that had a
+  successful login for this email in the last `LOGIN_TRUSTED_IP_DAYS` (30) may keep trying.
+- A success clears only that IP's counter. Every attempt is recorded in `login_attempt`.
+
+### `POST /auth/select-organization`
+Auth. Body `{ "organizationId": "uuid" }`. Returns `{ "accessToken" }` scoped to that org
+(`isSuperAdmin` computed). Errors: `403 not_a_member`.
+
+### `GET /auth/me`
+Auth. `{ "user": { id, email, fullName, emailVerified }, "organizations": [ { id, name, isSuperAdmin } ] }`.
+`organizations` = orgs the user owns + orgs where they hold an **active** membership.
+
+### `POST /auth/refresh`
+Reads the `dms_refresh` cookie (`401 unauthorized` "No refresh token" if missing). Body (optional):
+`{ "organizationId"?: "uuid" }`.
+
+- Unknown / revoked / expired token → `401 invalid_refresh_token`, cookie cleared.
+- Account disabled → **all** the user's refresh tokens revoked, `401 account_disabled`.
+- Otherwise: the old token is revoked, a new one issued (rotation), and a new access token returned. If
+  `organizationId` is given and the user still belongs to it, the token is scoped to it; otherwise the
+  token has **no** org (the client then lands on organization selection).
+
+`200 { "accessToken" }` + new cookie.
+
+### `POST /auth/logout`
+Revokes the current refresh token (if any) and clears the cookie. `204`.
+
+### `POST /auth/logout-all`
+Auth. Revokes every refresh token of the user. `204`.
+
+### `POST /auth/forgot-password`
+Public, rate limit `sensitive`. Body `{ "email" }`. Always `200 { "message": "If an account exists…" }`
+(no account enumeration). If the user exists: old reset tokens invalidated, new link emailed
+(`${FRONTEND_URL}/reset-password?token=…`, valid `PASSWORD_RESET_TTL_MINUTES` = 60).
+
+### `POST /auth/reset-password`
+Public, rate limit `sensitive`. Body `{ "token", "newPassword" (≥8) }`. Sets the argon2id hash, marks the
+token used and **revokes all refresh tokens** (signs out everywhere). `200 { "reset": true }`.
+Errors: `400 invalid_token`.
+
+---
+
+## 5. Organizations — `/organizations`
+
+All routes act on the organization in the caller's token ("current").
+
+### `GET /organizations/current` — Auth+Org
+`{ "organization": { id, name, industry, subfolderDepthLimit, timeZone, createdAt } }`
+
+### `PATCH /organizations/current` — Auth+Org+SA
+Body (all optional): `{ name?: string≥1, industry?: string, subfolderDepthLimit?: int 1–20, timeZone?: IANA zone }`.
+`timeZone` must be a zone Postgres/ICU knows (also enforced by DB check `organization_timeZone_valid`).
+`200 { "organization" }`. Audit `config_change`.
+
+### `GET /organizations/current/dashboard` — Auth+Org+SA
+Counts only, never contents (Feature Spec §10A). Confidential documents are **included** in counts.
+```json
+{
+  "counts": { "departments": 3, "users": 12, "documents": 840, "storageUsedBytes": "123456" },
+  "storage": { "backendType": "r2", "status": "verified", "lastTestedAt": "…" } | null,
+  "departments": [ { "id", "name", "memberCount", "documentCount" } ]
+}
+```
+
+### `GET /organizations/current/members` — Auth+Org+SA
+Full directory: `{ "members": [ { userId, email, fullName, isSuperAdmin, accountStatus, departments: [ { departmentId, departmentName, roleName, status } ] } ] }`.
+The owner is always listed (with no departments unless also a member).
+
+### `GET /organizations/current/users` — std
+Minimal directory for pickers (share dialog, vault members): `{ "users": [ { id, fullName, email } ] }`.
+
+### `GET /organizations/current/invitations` — Auth+Org+SA
+All **pending** invitations in the org — same item shape as [§8](#8-invitations).
+
+### `PATCH /organizations/current/members/:userId/disable` · `…/enable` — Auth+Org+SA
+Flips **every membership the user holds in this organization** to `disabled` / `active`. Never touches the
+global `user.status` (an account in another organization is unaffected). Takes effect immediately on the
+user's next request (the auth guard re-checks membership). `200 { "updated": <membership count> }`.
+Errors: `400 cannot_modify_super_admin` (the owner), `404 member_not_found` (nothing to flip).
+
+### `POST /organizations/current/members/:userId/reset-password` — Auth+Org+SA
+Triggers the normal forgot-password email for that user. `200 { "sent": true }`. Errors: `404 member_not_found`.
+
+---
+
+## 6. Storage — `/storage`
+
+One storage backend per organization (`storage_config`). Credentials are AES-256-GCM encrypted with
+`STORAGE_CREDENTIALS_KEY` and **never returned**.
+
+### `GET /storage/config` — Auth+Org
+```json
+{ "storage": { "backendType": "nas" | "r2", "status": "pending" | "verified" | "error", "lastTestedAt": "…", "quotaBytes": "…" | null, "usedBytes": "…" } | null }
+```
+
+### `POST /storage/config` — Auth+Org+SA
+Tests, then saves (only if the test passes — a failure writes nothing). Body is one of:
+
+```json
+{ "backendType": "nas", "mountPath": "/mnt/dms-nas/acme", "username"?: "…", "password"?: "…" }
+{ "backendType": "r2", "endpoint": "https://<32-hex-account>.r2.cloudflarestorage.com", "bucket": "…", "accessKeyId": "…", "secretAccessKey": "…" }
+```
+
+Target policy (`storage.policy.ts`, SECURITY_AUDIT M-4), checked before any I/O:
+- **NAS**: `mountPath` must be absolute and resolve (symlinks/junctions followed) **inside `STORAGE_NAS_ROOT`**.
+  In production NAS is refused until `STORAGE_NAS_ROOT` is set; in dev an unset root allows any path.
+  A missing path and an outside path give the same error.
+- **R2**: `https://<32 hex>.r2.cloudflarestorage.com` (a jurisdiction subdomain like `.eu.` is allowed), no
+  credentials/port/path/query in the URL — or a hostname listed in `STORAGE_R2_ALLOWED_HOSTS`.
+
+The test is a 4-step round trip: connect → write a throwaway object → read back & compare → delete.
+`200 { "status": "verified" }`. Errors: `400 storage_path_not_allowed`, `400 storage_endpoint_not_allowed`,
+`400 nas_root_not_configured`, `400 storage_test_failed` (message names the failing step), `400 validation_error`.
+Audit `config_change`.
+
+### `POST /storage/config/test` — Auth+Org+SA
+Re-runs the round trip with the saved credentials; records `status` (`verified`/`error`) and `lastTestedAt`.
+`200 { "status": "verified", "lastTestedAt" }`. Errors: `404 storage_not_configured`,
+`400 storage_test_failed`, policy errors as above, `500 storage_credentials_unreadable`.
+
+---
+
+## 7. Departments — `/departments`
+
+Source: `modules/department/*`. A department owns its document types, roles, folders and members.
+
+### `GET /departments/permission-catalogue` — std
+The fixed permission key set the role editor renders (served by the server so the client can't drift):
+```json
+{ "groups": [ { "key": "documents", "label": "Documents", "permissions": [ { "key": "documents.view", "label": "View documents", "inactiveInR1"?: true } ] } ],
+  "dependencies": { "documents.download": ["documents.view"], … } }
+```
+Full catalogue: [Security & permissions §3](developer/04_Security_and_Permissions.md#3-the-permission-catalogue).
+
+### `GET /departments/templates` — std
+Six starter templates (`healthcare`, `education`, `accounts`, `hr`, `legal`, `blank`): suggested name, ID
+prefix, vocabulary (`subjectTerm` / `identifierTerm`), document types with fields, roles with full permission
+maps, and default rules. Shape: `DepartmentTemplate` in `frontend/src/lib/departments.ts`.
+
+### `GET /departments` — std
+`{ "departments": DepartmentSummary[] }` — the Super Admin sees every department; anyone else only those
+they hold an **active** membership in.
+`DepartmentSummary = { id, name, idPrefix, subjectTerm, identifierTerm, subfolderDepthLimit, rules, status, documentTypeCount, memberCount, documentCount, createdAt }`.
+
+### `GET /departments/:departmentId` — std, Svc
+Allowed when the caller has `documents.view` **or** `members.change_role` there (so a non-member Super Admin
+can administer it). `403 forbidden` otherwise, `404 department_not_found`.
+```json
+{ "department": {
+  "id", "name", "idPrefix", "subjectTerm", "identifierTerm", "subfolderDepthLimit",
+  "rules": { "defaultSharing": { "externalLinksEnabled": false, "linkExpiryDays": 7 } },
+  "autoDeleteYears": null, "status": "active", "createdAt",
+  "documentTypes": [ { "id", "name", "idCode", "fields": [ { "id", "label", "fieldType", "isRequired", "isFilterable", "isTitle", "options"?, "sortOrder" } ] } ],
+  "roles": [ { "id", "name", "isSystem", "permissions": { "<key>": true }, "isDepartmentAdmin": true } ],
+  "members": [ { "userId", "email", "fullName", "roleId", "roleName", "status" } ]
+} }
+```
+
+### `POST /departments` — std+SA
+Creates a department, its roles, document types, initial members and a default **"General"** folder in one
+transaction. The creator is **not** auto-added as a member (deliberate decision).
+
+Body:
+```json
+{
+  "templateKey": "hr",
+  "name": "HR (1–80, unique in org)",
+  "idPrefix": "HR (2–8, A–Z0–9, unique in org)",
+  "subjectTerm": "Employee", "identifierTerm": "Employee ID",
+  "subfolderDepthLimit": 5 | null,
+  "rules"?: { "defaultSharing": { "externalLinksEnabled": false, "linkExpiryDays": 7 } },
+  "documentTypes": [ { "name": "Contract", "idCode": "CON (1–8, A–Z0–9)", "fields": [ { "label", "fieldType": "text|id|dropdown|date|number|person", "isRequired", "isFilterable", "isTitle", "options"?: ["…"] } ] } ],
+  "roles": [ { "name", "isSystem", "permissions": { "<key>": true } } ],
+  "members": [ { "userId": "uuid", "roleName": "Staff" } ]
+}
+```
+Rules: each type has exactly one title field and unique labels; dropdowns need ≥1 unique option and only
+dropdowns may have options; type names and ID codes unique; role names unique; each role's permission map
+must satisfy dependencies (refused, not auto-fixed); at least one role must be Department-Admin-capable;
+members must already be in the organization (or be the owner).
+`201 { "department": <same as GET> }`. Errors: `400 unknown_template | invalid_document_type | invalid_role | invalid_permissions | no_department_admin_role | unknown_role | not_an_organization_member`, `409 id_prefix_taken | department_name_taken`.
+
+### `PATCH /departments/:departmentId` — std, Svc
+Body (all optional): `{ name?, idPrefix?, subjectTerm?, identifierTerm?, subfolderDepthLimit?: int|null, rules?, status?: "active"|"archived" }`.
+- `name` or `status` present → **Super Admin only** (`403 forbidden`).
+- otherwise → `configuration.edit_rules`.
+- Changing `idPrefix` never rewrites existing document IDs (they're immutable); only new IDs use it.
+
+`200 { "department" }`. Errors: `409 id_prefix_taken`. Audit `config_change`.
+The auto-delete period is **not** changed here — see [§15](#15-retention--legal-hold).
+
+### Document types
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `POST /departments/:id/document-types` | `configuration.create_document_type` | Body = one document type (as in create). `201 { documentType }`. `409 id_code_taken | document_type_name_taken`. |
+| `PUT /departments/:id/document-types/:typeId` | `configuration.edit_document_type` | Full replace. Fields are matched by `id`; a field omitted from the body is deleted — refused with `409 field_in_use` if any document holds a value for it. Array order = sort order. |
+| `DELETE /departments/:id/document-types/:typeId` | `configuration.delete_document_type` | `409 document_type_in_use` if any document uses it; `400 last_document_type` if it's the last one. `200 { "deleted": true }`. |
+
+### Roles
+All require `members.change_role` **and** the "within reach" rule (SECURITY_AUDIT H-3): nobody can create,
+copy, change or delete a role carrying a permission they don't hold themselves in this department (Super Admin
+exempt). Errors for that rule: `403 role_exceeds_yours`.
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `POST /departments/:id/roles` | `{ name (1–60), permissions }` | Stored after dependency closure. `201 { role }`. `409 role_name_taken`. |
+| `POST /departments/:id/roles/:roleId/copy` | `{ name }` | Copy is never a system role. `201 { role }`. |
+| `PUT /departments/:id/roles/:roleId` | `{ name, permissions }` | Both the current and the new map must be within reach. An **unchanged** re-save always succeeds (the UI re-PUTs every role). `400 no_department_admin_role` if it would leave no admin-capable role. |
+| `DELETE /departments/:id/roles/:roleId` | — | `400 system_role`, `409 role_in_use` (has members), `400 no_department_admin_role`. `200 { "deleted": true }`. |
+
+`permissions` is a map of catalogue keys → boolean; unknown keys are `400 validation_error`; a child key
+without its parent (e.g. `documents.download` without `documents.view`) is `400 invalid_permissions`.
+
+### Members
+| Endpoint | Rule | Notes |
+|---|---|---|
+| `GET /departments/:id/addable-members` | `members.invite` | Org users without a role here (the owner is included, except for the owner themself). `{ members: [ { userId, email, fullName } ] }` |
+| `POST /departments/:id/members` | `members.invite` + can grant the role | Body `{ userId, roleId }`. `201 { member }`. `409 already_a_member`, `403 role_exceeds_yours`, `400 not_an_organization_member`. |
+| `PATCH /departments/:id/members/:userId` | `members.change_role` + can grant new role + **target's current role within reach** | Body `{ roleId }`. `200 { member: { userId, roleId, roleName } }`. `403 member_above_you`, `400 last_department_admin`. |
+| `DELETE /departments/:id/members/:userId` | `members.remove` + target within reach | Deletes the membership only (the account and other memberships are untouched). `403 member_above_you`, `400 last_department_admin`. `200 { "removed": true }`. |
+
+---
+
+## 8. Invitations
+
+Invitations add a person (existing account or brand new) to a department with a role. Token: 256-bit random,
+hash stored, valid **7 days**, link `${FRONTEND_URL}/invitations/<token>`.
+
+### `GET /departments/:departmentId/invitations` — std+Perm(`members.invite`)
+Pending invitations: `{ "invitations": [ { id, email, departmentId, departmentName, roleId, roleName, invitedBy, createdAt, expiresAt, isExpired } ] }`.
+
+### `POST /departments/:departmentId/invitations` — std+Perm(`members.invite`)
+Body `{ "email", "roleId" }`. The inviter must be able to grant the role (`403 role_exceeds_yours`).
+Errors: `404 role_not_found`, `409 already_a_member`, `409 invitation_pending`.
+`201 { "invitation": { id, email, expiresAt } }`. Sends email. Audit `member_change`.
+
+### `POST /departments/:departmentId/invitations/:invitationId/resend` — std+Perm(`members.invite`)
+Rotates the token and restarts the 7-day clock (old link stops working). `200 { "sent": true }`. `409 invitation_not_pending`.
+
+### `DELETE /departments/:departmentId/invitations/:invitationId` — std+Perm(`members.invite`)
+`200 { "revoked": true }`. `409 invitation_not_pending`.
+
+### `GET /invitations/:token` — Public
+`{ "invitation": { email, organizationName, departmentName, roleName, expiresAt, hasAccount } }`
+(`hasAccount` decides whether the accept page asks to sign in or to set a password).
+Errors: `404 invitation_not_found`, `409 invitation_accepted`, `410 invitation_revoked`, `410 invitation_expired`.
+
+### `POST /invitations/:token/accept` — optional Bearer
+Body `{ "fullName"?: "1–120", "password"?: "≥8" }`.
+- **Email already has an account** → the caller must send a Bearer token *for that account*
+  (`401 sign_in_required` otherwise). Response has no session.
+- **New email** → `fullName` + `password` required (`400 account_details_required`); the account is created
+  already **verified** (receiving the link proves the inbox); a session is returned (cookie + `accessToken`,
+  scoped to the org).
+
+`200 { organizationId, departmentId, createdAccount, accessToken? }`. Audit `member_change`.
+
+---
+
+## 9. Folders
+
+Mounted under `/departments/:departmentId`. Every folder route also checks that the folder **belongs to that
+department** (SECURITY_AUDIT H-1) — a folder of another department is `404 folder_not_found`.
+
+### `GET /departments/:departmentId/folders` — std+Perm(`documents.view`)
+Flat list of every folder the caller may know about (confidential folders they aren't named on — and their
+subtrees — are removed at the query layer), ordered by depth then name:
+```json
+{ "folders": [ { "id", "name", "parentFolderId", "depth", "isConfidential", "subfolderCount", "documentCount", "legalHold": "held" | "inherited" | null, "legalHoldId" } ] }
+```
+
+### `GET /departments/:departmentId/my-permissions?folderId=` — std
+What the caller may do here (drives which controls the UI renders):
+```json
+{ "permissions": { "<key>": true|false }, "source": "super_admin|role|role_restricted_by_folder|confidential_member|none",
+  "isConfidential": false, "roleName": "Staff" | null, "subfolderDepthLimit": 5, "canManageLegalHold": false }
+```
+A folder of another department yields all-false permissions.
+
+### `GET /departments/:departmentId/folders/:folderId/path` — std+Perm(`documents.view`, folder)
+Breadcrumb, root first: `{ "path": [ { "id", "name" } ] }`.
+
+### `POST /departments/:departmentId/folders` — std+Perm(`folders.create`)
+Body `{ "name": "1–80", "parentFolderId"?: uuid|null, "isConfidential"?: bool, "memberUserIds"?: uuid[] (≤200) }`.
+- `depth` = parent depth + 1 (root = 0); refused past the department limit (own `subfolderDepthLimit`, else the org default) — `400 depth_limit_reached`.
+- A child of a confidential folder is always confidential. `isConfidential: true` under a normal parent
+  **begins** a vault: the creator becomes its **owner**, `memberUserIds` are added as members (must be org users — `400 invalid_member`).
+- Names are unique among siblings — `409 folder_name_taken`. `404 parent_not_found`.
+
+`201 { "folder" }`.
+
+### `PATCH /departments/:departmentId/folders/:folderId` — std+Perm(`folders.rename`, folder)
+Body `{ "name" }`. `409 folder_name_taken`.
+
+### `POST /departments/:departmentId/folders/:folderId/move` — std + `folders.move` on the source **and** the destination
+Body `{ "parentFolderId": uuid | null }` (null = department root). Refused when: into itself or its own
+subtree (`400 invalid_move`), the subtree would exceed the depth limit (`400 depth_limit_reached`), a sibling
+has the same name (`409 folder_name_taken`), or the folder is covered by an inherited Legal Hold it would
+leave (`409 legal_hold`). Moving under a confidential folder makes the whole subtree confidential
+(confidentiality never downgrades). Permissions re-resolve from the new position automatically.
+
+### `DELETE /departments/:departmentId/folders/:folderId` — std+Perm(`folders.delete`, folder)
+Only empty folders: no subfolders and **no documents at all, including trashed ones** (`409 folder_not_empty`).
+`409 legal_hold` if the folder has an active hold. Released hold rows are removed with it.
+
+### Folder permission overrides — std+Perm(`configuration.edit_rules`, **department-level**)
+Overrides restrict a role on a folder and its subtree. They can only **remove** permissions, never add. Not
+allowed on confidential folders (`400 confidential_folder`).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET …/folders/:folderId/permissions` | — | `{ folderId, folderName, roles: [ { roleId, roleName, basePermissions, hasOverride, restrictedKeys } ] }` |
+| `PUT …/folders/:folderId/permissions/:roleId` | `{ "restrict": ["documents.download", …] }` (≤60) | same shape. Empty `restrict` clears the override. `404 role_not_found`. |
+| `DELETE …/folders/:folderId/permissions/:roleId` | — | same shape (role inherits again) |
+
+---
+
+## 10. Documents
+
+Document routes are **identity-based**: the caller has a document ID, and the service resolves permission for
+the document's own folder. A document you can't view is always `404 document_not_found`.
+
+### Access resolution for a document
+1. The permission engine for (department, folder) — role baseline, folder overrides, confidential named list.
+2. If that doesn't grant `documents.view` **and** the folder is not confidential: an active, accepted,
+   unexpired **share** to the caller (directly, or to a department they're an active member of) grants a
+   read-only floor: `view` + `preview` (+ `download` if the share allows). Nothing else.
+
+### Response shaping (SECURITY_AUDIT H-2)
+- Without `documents.version_history`: only the **current** version is returned, with `uploadedBy: null` and
+  `changeNote: null`, and `activity: []`.
+- Reached **only through a share**: `departmentId`, `folderId`, `documentType.id`, `fieldValues[].fieldDefId`
+  and `trashReason` are `null`.
+
+### `GET /documents?departmentId=&folderId=` — std+Perm(`documents.view`, folder)
+Active documents directly in a folder. `400 folder_required` without `folderId`.
+`{ "documents": [ { id, documentRef, titleValue, documentType (name), fileName, fileSize, mimeType, uploadedAt, updatedAt, legalHold } ] }`
+
+### `GET /documents/lookup?ref=HR-CON-2026-00142` — std
+Exact document-ID jump. `{ documentId, departmentId, folderId }`. `400 ref_required`, `404 document_not_found`.
+
+### `GET /documents/:documentId` — std
+The viewer payload. **Records a `view` audit event** each call.
+```json
+{ "document": {
+  "id", "documentRef", "titleValue", "departmentId", "folderId", "status": "active|in_trash",
+  "documentType": { "id", "name", "idCode" }, "currentVersionId",
+  "uploadedAt", "trashSource": "user|auto_delete|null", "trashReason", "createdAt", "updatedAt",
+  "fieldValues": [ { "fieldDefId", "label", "fieldType", "value" } ],
+  "versions": [ { "id", "versionNumber", "fileName", "fileSize", "mimeType", "ocrStatus", "changeNote", "isCurrent", "uploadedBy": { id, fullName, email } | null, "createdAt" } ],
+  "permissions": { "<key>": bool },
+  "legalHold": { "held": bool, "holds": CoveringHold[], "canManage": bool },
+  "activity": [ { "id", "action", "actorName", "description", "occurredAt" } ]
+} }
+```
+`legalHold.holds` (with reasons) is returned only to someone who may manage holds; a share recipient gets
+`{ held:false, holds:[], canManage:false }`.
+
+### `GET /documents/:documentId/activity` — std, `documents.version_history`
+The 50 most recent audit events for the document, without logging a view. `{ "activity": [...] }`.
+
+### `GET /documents/:documentId/file?versionId=&download=1` — std
+Raw bytes with the stored `Content-Type`, `Content-Length`, and `Content-Disposition: inline|attachment`.
+- `download=1|true` → needs `documents.download`, **audit-logged** (`download`); otherwise `documents.preview`.
+- `versionId` omitted → current version. A non-current version needs `documents.version_history`
+  (otherwise `404 version_not_found`).
+
+### `POST /documents/:documentId/versions/:versionId/restore` — std, `documents.upload_version`
+Copies an older version forward as a **new** current version (history only grows; the same `storageRef` is
+reused). `409 already_current`, `409 document_in_trash`, `404 version_not_found`. `200 { document }`.
+
+### `PATCH /documents/:documentId/metadata` — std, `documents.edit_metadata`
+Body `{ "fieldValues": [ { "fieldDefId", "value" } ] }` (≤200) — **replaces** all values. Validated against the
+type: unknown field, duplicate field, invalid dropdown option / date (`YYYY-MM-DD`) / number, missing
+required. The title is re-derived from the title field; the search vector is refreshed.
+`200 { document }`. Audit `edit`.
+
+### Trash
+
+| Endpoint | Rule | Behaviour |
+|---|---|---|
+| `DELETE /documents/:id` | `documents.delete` | Soft delete → `status=in_trash`, `trashSource=user`. `409 legal_hold` if held, `409 already_in_trash`. Audit `delete`. |
+| `POST /documents/:id/restore` | `documents.restore` | Back to its folder, everything intact. If `trashSource=auto_delete`: only a hold-authority (Department Admin, or vault owner) may restore, and a Legal Hold *"Restored after auto-delete"* is placed in the same step. `409 not_in_trash`. |
+| `POST /documents/:id/purge` | Department Admin | Permanent: deletes the files via the storage driver and the version/field/share/released-hold/document rows. Audit rows survive (`documentId` → NULL). `409 not_in_trash`, `409 legal_hold`. `{ id, purged: true }` |
+| `GET /departments/:id/trash` | `documents.restore` | `{ items: TrashItem[] }` with `deletedByName`, origin folder, `trashReason`, `daysUntilAutoRemove`, `legalHold`, `canRestore`, `canManageHold`. Confidential items hidden from non-members. |
+| `POST /departments/:id/trash/empty` | Department Admin | Purges every item except held ones. `{ purged, skipped }` |
+
+Items stay in trash **30 days** (`TRASH_RETENTION_DAYS`), then the daily job purges them — unless held.
+
+### `GET /departments/:departmentId/documents/needs-details` — std+Perm(`documents.view`)
+Documents saved by a never-block upload that are missing required values:
+`{ "documents": [ { id, documentRef, titleValue, folderId, documentType, missingFields: ["label"] } ] }`.
+
+---
+
+## 11. Upload
+
+Multipart (`@fastify/multipart`): **one file** per request, ≤ 25 text fields, ≤ `MAX_UPLOAD_BYTES`.
+Every upload takes a **concurrency slot** before its body is read: `MAX_CONCURRENT_UPLOADS` (8) per process and
+`MAX_CONCURRENT_UPLOADS_PER_USER` (2). No slot → `429 upload_busy` + `Retry-After: 5`.
+
+**Accepted formats** — decided by the file's **content**, which must agree with its name/declared type
+(`lib/upload-formats.ts`, SECURITY_AUDIT M-5):
+
+| Format | Detected by | OCR |
+|---|---|---|
+| PDF | `%PDF-` in the first 1 KB | embedded text (≤ `OCR_MAX_PAGES`) |
+| PNG | 8-byte signature | Tesseract |
+| JPEG | `FF D8 FF` | Tesseract |
+| DOCX | ZIP with `[Content_Types].xml` + `word/document.xml` | none |
+| XLSX | ZIP with `[Content_Types].xml` + `xl/workbook.xml` | none |
+| Markdown (`.md`, `.markdown`) → `text/markdown` | valid UTF-8 text, no control bytes, not an HTML/SVG/XML page, not a binary format renamed | the text itself, stored at upload |
+| Plain text (`.txt`) → `text/plain` | same as Markdown | the text itself, stored at upload |
+
+JPEG ↔ PNG mislabelling is tolerated (stored as what it really is). The **stored MIME is the detected one**.
+For text files the **extension** decides Markdown vs plain text (browsers often send `.md` as `text/plain`).
+Text files are `ocrStatus: done` immediately and searchable without the OCR worker (≤ 1,000,000 chars indexed).
+Inline HTML *inside* a Markdown document is accepted (the viewer never renders raw HTML); a file that **is** an
+HTML/SVG page is refused. Files are served with `Content-Type: text/markdown; charset=utf-8` (or `text/plain`)
+and `X-Content-Type-Options: nosniff`.
+Errors: `400 unsupported_format` (name/type not accepted), `400 unrecognised_content` (bytes aren't a valid
+accepted file), `400 content_mismatch` (e.g. a PNG named `.pdf`), `400 empty_file`, `413 file_too_large`,
+`400 file_required`.
+
+### `POST /departments/:departmentId/folders/:folderId/documents/upload` — std+Perm(`documents.upload`, folder)
+Multipart fields:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `file` | yes | the file part |
+| `documentTypeId` | yes | must belong to the folder's department (`400 document_type_mismatch`) |
+| `fieldValues` | no | JSON string `[{ "fieldDefId", "value" }]` (`400 invalid_field_values`) |
+| `changeNote` | no | note for the version |
+| `onDuplicate` | no | `new_version` \| `keep_both` \| `skip` |
+| `duplicateOfDocumentId` | with `new_version` | target document (`400 duplicate_target_required`) |
+
+Flow:
+1. Folder must be in the URL's department (`404 folder_not_found`) — checked before anything is stored.
+2. Content verified, SHA-256 computed.
+3. If `onDuplicate` is absent and a document **you can view** in this department already has a version with
+   the same checksum → `409 duplicate_detected` with `details.duplicates: [ { documentId, documentRef, titleValue, folderId, fileName } ]`. Re-send with a choice.
+4. `skip` → `200 { action: "skipped" }`. `new_version` → adds a version to `duplicateOfDocumentId`
+   (`201 { action: "new_version", document }`). Otherwise creates a new document
+   (`201 { action: "created", document }`).
+5. **Never blocks on metadata**: missing required fields still save; the document appears in *needs details*.
+6. The document ID `DEPT-TYPE-YYYY-NNNNN` is minted in the same transaction; OCR is enqueued (best-effort).
+7. If writing the database rows fails after the file was stored, the stored object is deleted again.
+
+### `POST /documents/:documentId/versions/upload` — std, `documents.upload_version`
+Multipart: `file`, optional `changeNote`. Same content rules. `409 document_in_trash`. `201 { document }`.
+
+---
+
+## 12. Search
+
+### `POST /departments/:departmentId/search` — std+Perm(`search.search`)
+POST because filters are structured; performs no writes.
+
+Body:
+```json
+{
+  "q"?: "free text (≤200)",
+  "documentTypeId"?: "uuid",
+  "quickView"?: "recent" | "uploaded_by_me" | "shared_with_me" | "trash",
+  "filters"?: [ { "fieldDefId": "uuid", "op": "contains|exact|in|date_range|number_range", "value"?, "values"?, "from"?, "to"? } ],
+  "uploadedFrom"?: "YYYY-MM-DD", "uploadedTo"?: "YYYY-MM-DD",
+  "limit"?: 1–200 (default 100)
+}
+```
+- `q` matches the full-text vector (document ID + title weight A, field values + filename B, OCR text C) as
+  **prefix** terms ANDed (`inv` matches `invoice`), **or** an `ILIKE` on the document ID. Ordered by
+  relevance when `q` is present, else most-recently-updated first.
+- `filters` (≤20) are ANDed `EXISTS` conditions on field values. `date_range` compares `YYYY-MM-DD` strings;
+  `number_range` ignores non-numeric stored values.
+- Upload Date bounds are inclusive whole days in the org's time zone. `400 invalid_date`, `400 invalid_date_range`.
+- `uploaded_by_me` = documents with any version uploaded by the caller. `shared_with_me` and `trash` return
+  `[]` here — those views use [`/shares/with-me`](#13-sharing) and [`/departments/:id/trash`](#trash).
+- Confidential folders you're not named on, and folders where an override withholds `documents.view` from
+  your role, are excluded at the query layer.
+
+`200 { "results": [ { id, documentRef, titleValue, documentType, folderId, folderName, fileName, fileSize, mimeType, uploadedAt, updatedAt, legalHold } ] }`
+
+---
+
+## 13. Sharing
+
+Sharing is **by reference** (a row pointing at the original document — no copy). Three target types:
+
+| Type | Needs | Notes |
+|---|---|---|
+| `user` | `sharing.share` | Any person in the org, any department. Not yourself (`400 cannot_share_with_self`). Active at once. |
+| `department` | `sharing.share`; cross-department also `sharing.cross_department_share` | Same department → active. Other department → `pending` until that department accepts (consent). |
+| `external_link` | `sharing.share` + `sharing.create_link` + `sharing.external_share`, and the department's `rules.defaultSharing.externalLinksEnabled` | Never in a confidential folder. **Expiry mandatory** (default `linkExpiryDays`). Returns the URL once. |
+
+`permission` = `view` (default) or `download` — `download` requires you to hold `documents.download`.
+`expiresInDays` 1–365 or `null` (no expiry; not allowed for links). Expired shares stop working immediately
+(access checks compare `expiresAt`), and are **deleted** the next time anyone in the organization loads
+`/shares/by-me` or `/shares/with-me` (lazy sweep, `purgeExpiredShares`) — so `status: "expired"` is rarely seen.
+
+`ShareView = { id, documentId, documentRef, documentTitle, sourceDepartmentId, sourceDepartmentName, targetType, targetLabel, permission, status: active|pending|revoked|expired, expiresAt, openedCount, sharedByName, createdAt }`
+
+| Endpoint | Rule | Response / notes |
+|---|---|---|
+| `POST /documents/:documentId/shares` | Svc (above) | Body `{ targetType, targetUserId?, targetDepartmentId?, permission?, expiresInDays? }`. `201 { share, linkUrl? }` — `linkUrl` = `${FRONTEND_URL}/l/<token>`, **only returned here**. Errors: `403 forbidden`, `403 external_links_disabled`, `400 expiry_required | invalid_expiry | target_required`, `404 user_not_found | department_not_found | document_not_found`. Audit `share`. |
+| `GET /documents/:documentId/shares` | `sharing.share` on the doc | `{ shares: ShareView[] }` |
+| `GET /shares/with-me` | std | Inbox: direct + department shares (excluding pending, revoked, expired, dismissed). `{ shares }` |
+| `GET /shares/by-me` | std | Everything you sent; revoked shares are kept as history. `{ shares }` |
+| `PATCH /shares/:shareId` | you created it | Body `{ permission?, expiresInDays? }` (at least one). `409 share_revoked`, `400 expiry_required` (links). `200 { share }` |
+| `DELETE /shares/:shareId` | you created it | Revoke (idempotent). `200 { id, status: "revoked" }` |
+| `POST /shares/:shareId/dismiss` | you're the direct recipient | Hides it from your inbox; access unchanged. Only `user` shares. |
+| `GET /departments/:id/shares/pending` | Perm(`sharing.cross_department_share`) in the receiving dept | Inbound cross-department shares awaiting a decision. |
+| `POST /departments/:id/shares/:shareId/respond` | same | Body `{ "accept": bool }` → activate or revoke. `409 not_pending`. |
+
+> The catalogue key `sharing.remove_share` is **not enforced** anywhere: revoking is self-service by the
+> sharer. A department-level oversight view is future work.
+
+### External links (public)
+
+| Endpoint | Response |
+|---|---|
+| `GET /links/:token` | `{ "document": { documentRef, title, permission } }`. Increments `openedCount`, audit `link_access` (attributed to the sharer). |
+| `GET /links/:token/file?download=1` | current version bytes. `403 download_not_allowed` for view-only links. |
+
+**Every open and file fetch re-validates** the link against current state (SECURITY_AUDIT H-4): token matches,
+share active & unexpired, document not in trash, sharer's account active, the permission engine still grants
+the sharer `documents.view + sharing.share + sharing.create_link + sharing.external_share` on the document's
+**current** folder (so a folder becoming confidential, or the sharer losing access, kills it), and the
+department still allows links. Any failure → the uniform `404 link_unavailable` (not counted, not logged).
+A failure **suspends** rather than revokes — reversing the condition restores the link; revoking is final.
+A download link whose sharer lost `documents.download` drops to view.
+
+---
+
+## 14. Confidential folders
+
+A confidential folder ("vault") is invisible to everyone not on its **named list**; roles grant nothing there,
+and the Super Admin is excluded entirely. Member management is folder-scoped; the list lives on the vault's
+**root** confidential folder (children inherit it).
+
+| Endpoint | Rule | Notes |
+|---|---|---|
+| `GET /folders/:folderId/confidential/members` | on the list (else `404 folder_not_found`) | `{ folderId, folderName, canManage, members: [ { userId, fullName, email, isOwner } ] }` — `canManage` true only for the owner |
+| `POST /folders/:folderId/confidential/members` | **owner only** (`403 not_vault_owner`) | Body `{ userId }`. `400 invalid_member`, `409 already_member`. Audit `permission_change` (confidential). |
+| `DELETE /folders/:folderId/confidential/members/:userId` | **owner only** | `400 cannot_remove_owner`, `404 not_a_member`. |
+
+**Dual-control recovery** of an *orphaned* vault (no members left). Callers: Super Admin or a Department
+Admin of that department (`403 forbidden`).
+
+| Endpoint | Notes |
+|---|---|
+| `GET /departments/:id/confidential/orphaned` | `{ folders: [ { folderId, folderName } ] }` — the one deliberate exception to invisibility |
+| `GET /departments/:id/confidential/recoveries` | `{ recoveries: [ { id, folderId, folderName, newMemberName, status, superAdminApproved, deptAdminApproved, createdAt } ] }` |
+| `POST /departments/:id/confidential/folders/:folderId/recovery` | Body `{ newMemberUserId }`. `409 not_orphaned`, `409 recovery_in_progress`, `400 invalid_member`. `201 { recovery }` |
+| `POST /departments/:id/confidential/recoveries/:recoveryId/approve` | Records the caller's approval in their capacity. Completes when **both** a Super Admin and a Department Admin approved, and they're **two different people** (`400 distinct_approvers_required`) — the new member is added as **owner**. `409 not_pending`. |
+
+---
+
+## 15. Retention & Legal Hold
+
+Source: `modules/retention/*`, `lib/legal-hold.ts`, `worker/retention.worker.ts`.
+
+**Auto-delete** (per department, off by default): a document whose **Upload Date + N years** is on or before
+"today" (org time zone) is moved to Trash by the daily run (`RETENTION_JOB_TIME` 02:00,
+`RETENTION_JOB_TIME_ZONE`), then purged 30 days later — unless under a Legal Hold. `uploadedAt` is immutable
+(DB trigger), so nothing restarts the clock.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /departments/:id/retention` | `retention.manage_auto_delete` | `{ departmentId, autoDeleteYears, timeZone, nextRunAt, nextRunDate, schedule: { time, timeZone } }` |
+| `POST /departments/:id/retention/preview` | same | Body `{ autoDeleteYears: 1–100 \| null }` → `{ currentYears, autoDeleteYears, requiresConfirmation, affectedCount, nextRunAt, nextRunDate, message }`. Counts confidential docs too (a count reveals nothing). |
+| `PUT /departments/:id/retention` | same | Body `{ autoDeleteYears, confirm? }`. **Setting or shortening** needs `confirm: true`, otherwise `409 confirmation_required` with `details.preview` and nothing is saved. Lengthening / switching off saves directly. Saved conditionally on the value previewed — `409 setting_changed` if someone else changed it. `400 invalid_period`. Audit `retention_change`. Response = setting + `affectedCount`. |
+| `GET /departments/:id/retention/upcoming` | `retention.view_upcoming_deletions` | Next 30 days: `{ autoDeleteYears, windowDays, today, nextRunAt, nextRunDate, items: [ { id, documentRef, titleValue, documentType, folderId, folderName, uploadedAt, uploadDate, dueDate, scheduledDate, legalHold, canManageHold } ] }`. Held documents are listed and marked. |
+
+**Legal Hold** blocks every destruction path (user delete, auto-delete, single purge, empty trash, automatic
+purge). A hold targets one document or one folder (covers the folder's whole subtree, including documents added
+later). Rows are kept after removal as history.
+
+**Hold authority**: `retention.manage_legal_hold` in the department — except **inside a confidential folder**,
+where only the vault's **owner** may (the Super Admin's baseline doesn't include the retention keys).
+
+| Endpoint | Notes |
+|---|---|
+| `GET /departments/:id/legal-holds` | `retention.manage_legal_hold`. `{ holds: [ { id, scope, documentId, documentRef, titleValue, folderId, folderName, reason, placedByName, placedAt } ] }` (holds in vaults you can't see are omitted) |
+| `POST /documents/:documentId/legal-hold` | Body `{ reason }` (required, trimmed, ≤500 chars — `400 reason_required | reason_too_long`). Works on trashed documents too. `409 already_held`. `201 { hold }`. Audit `legal_hold_placed`. |
+| `POST /departments/:id/folders/:folderId/legal-hold` | Same, for a folder. |
+| `DELETE /legal-holds/:holdId` | Sets `removedAt/removedBy`. Nothing is deleted immediately — an already-expired document is handled by the **next** daily run. `409 already_removed`, `404 hold_not_found`. Audit `legal_hold_removed`. |
+
+---
+
+## 16. Audit
+
+Every significant action writes an `audit_event` row (append-only, enforced by a DB trigger — see the schema
+doc). Events about documents in confidential folders are flagged `isConfidential` automatically and are visible
+only to holders of `audit.view_confidential_audit`.
+
+### `GET /departments/:departmentId/audit` — std+Perm(`audit.view_audit`)
+Query (all optional, ANDed): `actorUserId`, `actorType=user|system`, `action=<AuditAction>`,
+`documentQuery` (case-insensitive match on the description — survives purges), `from`/`to` (ISO datetime),
+`limit` (1–1000, default 200). Newest first.
+```json
+{ "events": [ { "id", "action", "actorType", "actorName": "Name | System", "documentRef", "targetDescription", "isConfidential", "occurredAt" } ],
+  "canExport": bool, "includesConfidential": bool }
+```
+`AuditAction`: `view, upload, download, edit, delete, restore, share, link_access, role_change, member_change, config_change, permission_change, workflow_transition, auto_delete, purge, legal_hold_placed, legal_hold_removed, retention_change`.
+
+### `GET /departments/:departmentId/audit/export` — std+Perm(`audit.export_audit`)
+Same filters, up to 1000 rows, as `text/csv` (`Content-Disposition: attachment; filename="audit-<deptId>.csv"`).
+Columns: `Time, Actor, Action, Document, Details, Confidential`. RFC-4180 quoting.
+⚠ Cells are not yet neutralised against spreadsheet formula injection (SECURITY_AUDIT L-1).
+
+---
+
+## 17. Health
+
+### `GET /health` — Public
+`{ "status": "ok", "timestamp": "…" }`. Polled by the container healthcheck; logged at `warn` level only.
+
+---
+
+## 18. Error code catalogue
+
+Grouped by module. "Where" = the function that raises it.
+
+**Guards / generic**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `validation_error` | Body/query failed schema validation (`details` = per-field messages) |
+| 400 | `no_organization_selected` | Token has no organization |
+| 400 | `department_required` | `requirePermission` couldn't find a department in the request |
+| 401 | `unauthorized` | Missing/invalid/expired access token; or no refresh cookie |
+| 401 | `account_disabled` | Account disabled (any request, and refresh) |
+| 401 | `session_revoked` | You no longer belong to the token's organization |
+| 403 | `email_not_verified` | Email not verified yet |
+| 403 | `forbidden` | Not allowed (see per-endpoint rules) |
+| 429 | `rate_limited` | Route rate limit (`code` field) |
+| 500 | `internal_error` | Unexpected; see server logs |
+
+**Auth**: `email_already_registered` 409 · `invalid_token` 400 · `already_verified` 400 · `signup_disabled` 403 ·
+`invite_code_required` 400 · `invalid_invite_code` 400 · `invalid_credentials` 401 · `too_many_attempts` 429 ·
+`not_a_member` 403 · `invalid_refresh_token` 401.
+
+**Organization**: `cannot_modify_super_admin` 400 · `member_not_found` 404.
+
+**Storage**: `storage_not_configured` 400/404 · `storage_test_failed` 400 · `storage_credentials_unreadable` 500 ·
+`storage_path_not_allowed` 400 · `storage_endpoint_not_allowed` 400 · `nas_root_not_configured` 400.
+
+**Department**: `department_not_found` 404 · `unknown_template` 400 · `department_name_taken` 409 · `id_prefix_taken` 409 ·
+`unknown_role` 400 · `not_an_organization_member` 400 · `invalid_document_type` 400 · `invalid_role` 400 ·
+`invalid_permissions` 400 · `no_department_admin_role` 400 · `id_code_taken` 409 · `document_type_name_taken` 409 ·
+`document_type_not_found` 404 · `field_in_use` 409 · `document_type_in_use` 409 · `last_document_type` 400 ·
+`role_not_found` 404 · `role_name_taken` 409 · `system_role` 400 · `role_in_use` 409 · `role_exceeds_yours` 403 ·
+`already_a_member` 409 · `member_not_found` 404 · `member_above_you` 403 · `last_department_admin` 400.
+
+**Invitation**: `department_not_found` 404 · `role_not_found` 404 · `role_exceeds_yours` 403 · `already_a_member` 409 ·
+`invitation_pending` 409 · `invitation_not_found` 404 · `invitation_not_pending` 409 · `invitation_revoked` 410 ·
+`invitation_accepted` 409 · `invitation_expired` 410 · `sign_in_required` 401 · `account_details_required` 400.
+
+**Folder**: `folder_not_found` 404 · `parent_not_found` 404 · `depth_limit_reached` 400 · `invalid_member` 400 ·
+`folder_name_taken` 409 · `invalid_move` 400 · `legal_hold` 409 · `folder_not_empty` 409 · `confidential_folder` 400 ·
+`role_not_found` 404.
+
+**Document**: `document_not_found` 404 · `folder_required` 400 · `ref_required` 400 · `forbidden` 403 ·
+`version_not_found` 404 · `already_current` 409 · `document_in_trash` 409 · `document_type_mismatch` 400 ·
+`unknown_field` · `duplicate_field` · `invalid_option` · `invalid_date` · `invalid_number` · `missing_required_field` (all 400) ·
+`already_in_trash` 409 · `not_in_trash` 409 · `legal_hold` 409.
+
+**Upload**: `file_required` 400 · `document_type_required` 400 · `invalid_field_values` 400 · `unsupported_format` 400 ·
+`unrecognised_content` 400 · `content_mismatch` 400 · `empty_file` 400 · `file_too_large` 413 · `duplicate_detected` 409 ·
+`duplicate_target_required` 400 · `folder_not_found` 404 · `upload_busy` 429.
+
+**Search**: `invalid_date` 400 · `invalid_date_range` 400.
+
+**Sharing**: `document_not_found` 404 · `forbidden` 403 · `target_required` 400 · `cannot_share_with_self` 400 ·
+`user_not_found` 404 · `department_not_found` 404 · `external_links_disabled` 403 · `expiry_required` 400 ·
+`invalid_expiry` 400 · `share_not_found` 404 · `share_revoked` 409 · `not_pending` 409 · `link_unavailable` 404 ·
+`download_not_allowed` 403 · `version_not_found` 404.
+
+**Confidential**: `folder_not_found` 404 · `not_vault_owner` 403 · `invalid_member` 400 · `already_member` 409 ·
+`not_a_member` 404 · `cannot_remove_owner` 400 · `department_not_found` 404 · `forbidden` 403 · `not_orphaned` 409 ·
+`recovery_in_progress` 409 · `recovery_not_found` 404 · `not_pending` 409 · `distinct_approvers_required` 400.
+
+**Retention**: `department_not_found` 404 · `forbidden` 403 · `invalid_period` 400 · `confirmation_required` 409 ·
+`setting_changed` 409 · `document_not_found` 404 · `folder_not_found` 404 · `reason_required` 400 · `reason_too_long` 400 ·
+`already_held` 409 · `hold_not_found` 404 · `already_removed` 409.
+
+**Audit**: `forbidden` 403.

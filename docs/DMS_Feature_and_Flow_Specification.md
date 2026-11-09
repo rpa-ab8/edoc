@@ -1,14 +1,14 @@
-# Document Management System — Feature & Flow Specification
+# Edoc — Feature & Flow Specification
 
 **Status:** Complete functional design for Release 1 — foundation for the PRD
 **Scope:** All Release 1 features and screens. Foundation decisions resolved (Section 9); companion *Scope & MVP Definition* holds phasing and open compliance detail for R2.
-**Companion documents:** *DMS Scope & MVP Definition*
+**Companion documents:** *Edoc Scope & MVP Definition*
 
 ---
 
 ## 1. Product Concept
 
-A single, universal DMS that any sector can use — healthcare, education, accounts, HR, legal, or anything added later — without rebuilding the software each time.
+Edoc: a single, universal document management system that any sector can use — healthcare, education, accounts, HR, legal, or anything added later — without rebuilding the software each time.
 
 This is achieved by splitting the system into two layers:
 
@@ -307,7 +307,7 @@ Three mechanics matter beyond the happy path:
 - **Non-blocking saves.** One file needing manual entry never holds up the others.
 - **Background OCR.** Runs as files land, so scans become full-text searchable shortly after upload without anyone waiting.
 
-Formats: PDF, images and Office files (DOCX, XLSX). Unsupported types are flagged rather than failing silently.
+Formats: PDF, images and Office files (DOCX, XLSX), plus Markdown (.md) and plain text (.txt) — added 2026-11-07. Markdown is shown formatted in the viewer (raw HTML never rendered, images not auto-loaded); plain text is shown as-is. Both are full-text searchable at once, without OCR. Unsupported types are flagged rather than failing silently.
 
 *Deferred:* auto-extraction behaviour (confidence tiers, confirm step, provenance) was designed but parked for later review. Scan-from-mobile and email-to-upload are natural future additions.
 
@@ -425,7 +425,7 @@ Every element is permission-driven: toolbar actions (download, share) appear onl
 
 Deletion is two-stage: deleting moves an item to trash, where it is recoverable; it is only truly gone when the retention window lapses (default 30 days) or a Department Admin purges. Each row shows who deleted the item and its origin folder; restore returns it to that folder with ID, metadata and version history intact. An auto-remove countdown makes the window visible and turns urgent as it nears.
 
-Two permission tiers share the screen: anyone with delete rights can restore; only a Department Admin sees "Empty trash". The overriding rule: an item under a **retention lock cannot be purged** — its restore is disabled and empty-trash skips it — which is what makes retention enforceable rather than advisory. Emptying trash requires a hard confirmation; it is the one place data genuinely disappears.
+Two permission tiers share the screen: anyone with delete rights can restore; only a Department Admin sees "Empty trash". The overriding rule *(amended v1.2)*: an item under a **Legal Hold cannot be purged** — "Empty trash", a single permanent delete and the daily automatic purge all skip it, though it can still be restored — which is what makes holds enforceable rather than advisory. Emptying trash requires a hard confirmation. *(v1.2)* Items the daily auto-delete moved here are labelled with the reason "Auto-deleted - retention period ended" and the System as deleter; only a Department Admin may restore one, and restoring places a Legal Hold so it isn't deleted again the next day.
 
 ## 10D. Audit Log Viewer
 
@@ -441,7 +441,7 @@ The compliance surface the BRD calls for. Where the viewer's activity feed answe
 A distinct folder mode for the organization's most sensitive material, and the reason for the "except confidential folders" caveat throughout this document. It differs from an ordinary restricted folder in one decisive way: a restricted folder is *visible but locked*; a confidential folder is *invisible entirely*.
 
 ### 11.1 Access model
-Access is an **explicit named list of users**, not roles — role inheritance is disabled for the folder. Adding access means adding a person by name; a new department manager does not gain entry automatically. The creating owner cannot be removed (first half of the anti-orphaning guardrail).
+Access is an **explicit named list of users**, not roles — role inheritance is disabled for the folder. Adding access means adding a person by name; a new department manager does not gain entry automatically. The creating owner cannot be removed (first half of the anti-orphaning guardrail). **Only the owner manages the list** — other members have access but cannot add or remove anyone (decided 2026-11-07, SECURITY_AUDIT.md M-6).
 
 ### 11.2 Enforced guarantees
 These are properties of the folder type, not toggles an admin casually flips:

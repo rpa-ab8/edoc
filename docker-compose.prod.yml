@@ -25,7 +25,8 @@ x-backend: &backend
     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
   logging: *logging
-  # NAS storage only: mount the share at the same path the storage config uses, in api AND worker.
+  # NAS storage only: mount the share at the same path the storage config uses, in api AND worker,
+  # and set STORAGE_NAS_ROOT=/mnt/dms-nas in .env.production (NAS is refused without it).
   # volumes:
   #   - /mnt/dms-nas:/mnt/dms-nas
 
@@ -71,6 +72,19 @@ services:
     <<: *backend
     restart: unless-stopped
     command: ["node", "dist/worker/ocr.worker.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Daily retention run (auto-delete into trash, then the automatic trash purge), at
+  # RETENTION_JOB_TIME / RETENTION_JOB_TIME_ZONE from .env.production. Its own process so a slow
+  # purge never competes with OCR, and so it can be stopped on its own.
+  retention-worker:
+    <<: *backend
+    restart: unless-stopped
+    command: ["node", "dist/worker/retention.worker.js"]
     depends_on:
       migrate:
         condition: service_completed_successfully

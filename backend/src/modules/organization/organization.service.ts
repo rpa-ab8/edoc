@@ -28,6 +28,7 @@ export async function getOrganization(deps: Deps, organizationId: string) {
     name: org.name,
     industry: org.industry,
     subfolderDepthLimit: org.subfolderDepthLimit,
+    timeZone: org.timeZone,
     createdAt: org.createdAt,
   };
 }
@@ -53,6 +54,7 @@ export async function updateOrganization(
     name: updated.name,
     industry: updated.industry,
     subfolderDepthLimit: updated.subfolderDepthLimit,
+    timeZone: updated.timeZone,
     createdAt: updated.createdAt,
   };
 }

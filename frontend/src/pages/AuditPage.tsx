@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { inputBase, primaryButtonBase } from "../components/AuthCard";
+import { DateRangePicker } from "../components/DateRangePicker";
 import { Select } from "../components/Select";
 import { ChevronLeftIcon, DownloadIcon, LockIcon } from "../components/icons";
 import { ApiRequestError } from "../lib/api";
@@ -27,6 +28,9 @@ function whenLabel(iso: string): string {
   return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+// The "User" filter's choice for events no person caused (actorType = system).
+const SYSTEM = "__system__";
+
 /** The department's audit log (AUD-2/4/5): four combinable filters, colour-weighted actions, and a
  *  CSV export shown only to holders of the separate Export-audit permission. */
 export function AuditPage() {
@@ -43,7 +47,8 @@ export function AuditPage() {
 
   const filters: AuditFilters = useMemo(
     () => ({
-      actorUserId: actorUserId || undefined,
+      actorUserId: actorUserId && actorUserId !== SYSTEM ? actorUserId : undefined,
+      actorType: actorUserId === SYSTEM ? ("system" as const) : undefined,
       action: action || undefined,
       documentQuery: documentQuery.trim() || undefined,
       from: from ? new Date(from).toISOString() : undefined,
@@ -112,7 +117,11 @@ export function AuditPage() {
               onChange={setActorUserId}
               placeholder="Anyone"
               ariaLabel="User"
-              options={[{ value: "", label: "Anyone" }, ...users.map((u) => ({ value: u.id, label: u.fullName, hint: u.email }))]}
+              options={[
+                { value: "", label: "Anyone" },
+                { value: SYSTEM, label: "System", hint: "Auto-delete and Trash purge" },
+                ...users.map((u) => ({ value: u.id, label: u.fullName, hint: u.email })),
+              ]}
             />
           </div>
           <div>
@@ -137,13 +146,19 @@ export function AuditPage() {
               onChange={(e) => setDocumentQuery(e.target.value)}
             />
           </div>
-          <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-ink">From</label>
-            <input type="date" className={`${inputBase} w-full`} value={from} onChange={(e) => setFrom(e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-ink">To</label>
-            <input type="date" className={`${inputBase} w-full`} value={to} onChange={(e) => setTo(e.target.value)} />
+          <div className="lg:col-span-2">
+            <label className="mb-1.5 block text-[12px] font-medium text-ink">Date</label>
+            <DateRangePicker
+              from={from}
+              to={to}
+              onChange={(f, t) => {
+                setFrom(f);
+                setTo(t);
+              }}
+              presets
+              label="Event date"
+              className="w-full"
+            />
           </div>
         </div>
 
@@ -176,7 +191,15 @@ export function AuditPage() {
                   {data?.events.map((e) => (
                     <tr key={e.id} className="border-b border-line-muted last:border-b-0 hover:bg-surface-muted/50">
                       <td className="whitespace-nowrap px-5 py-3 text-[13px] text-muted">{whenLabel(e.occurredAt)}</td>
-                      <td className="px-5 py-3 text-[13.5px] font-medium text-ink">{e.actorName}</td>
+                      <td className="px-5 py-3 text-[13.5px] font-medium text-ink">
+                        {e.actorType === "system" ? (
+                          <span className="inline-flex items-center rounded-md bg-surface-muted px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                            System
+                          </span>
+                        ) : (
+                          e.actorName
+                        )}
+                      </td>
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11.5px] font-semibold ${TONE_CLASS[actionTone(e.action)]}`}>
                           {ACTION_LABELS[e.action]}

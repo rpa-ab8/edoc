@@ -29,11 +29,40 @@ export default fp(async function authenticatePlugin(app: FastifyInstance) {
       return reply.code(401).send({ error: "unauthorized", message: "Missing access token" });
     }
     const token = header.slice("Bearer ".length);
+    let payload: AccessTokenPayload;
     try {
-      request.user = verifyAccessToken(env, token);
+      payload = verifyAccessToken(env, token);
     } catch {
       return reply.code(401).send({ error: "unauthorized", message: "Invalid or expired token" });
     }
+
+    // The token's claims are a snapshot from when it was signed (up to 15 minutes ago). Re-check the
+    // facts they stand for on every request, so disabling an account or a member takes effect at
+    // once rather than when the token expires (SECURITY_AUDIT.md M-2): the account is still active,
+    // the user still belongs to the organization the token names (its owner, or an active member of
+    // any department), and Super Admin is whatever the database says, never the claim.
+    const orgId = payload.organizationId;
+    const [account, ownedOrg, activeMembership] = await Promise.all([
+      app.prisma.user.findUnique({ where: { id: payload.sub }, select: { status: true } }),
+      orgId
+        ? app.prisma.organization.findFirst({ where: { id: orgId, createdByUserId: payload.sub }, select: { id: true } })
+        : null,
+      orgId
+        ? app.prisma.membership.findFirst({
+            where: { organizationId: orgId, userId: payload.sub, status: "active" },
+            select: { id: true },
+          })
+        : null,
+    ]);
+    if (!account || account.status !== "active") {
+      return reply.code(401).send({ error: "account_disabled", message: "This account has been disabled." });
+    }
+    if (orgId && !ownedOrg && !activeMembership) {
+      return reply
+        .code(401)
+        .send({ error: "session_revoked", message: "Your access to this organization has changed. Please sign in again." });
+    }
+    request.user = { ...payload, isSuperAdmin: orgId ? ownedOrg !== null : undefined };
   });
 
   app.decorate("requireVerifiedEmail", async (request: FastifyRequest, reply: FastifyReply) => {

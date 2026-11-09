@@ -138,7 +138,7 @@ function CompleteDetailsForm({
 
   // Prefill once the document loads, from its existing field values.
   const initial: FieldValues = {};
-  if (doc) for (const fv of doc.fieldValues) initial[fv.fieldDefId] = fv.value;
+  if (doc) for (const fv of doc.fieldValues) if (fv.fieldDefId) initial[fv.fieldDefId] = fv.value;
   const current = values ?? initial;
 
   async function save() {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidTimeZone } from "../lib/calendar.js";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -24,25 +25,59 @@ const envSchema = z.object({
       message: "STORAGE_CREDENTIALS_KEY must be 32 random bytes, base64-encoded",
     }),
 
+  // Where a NAS storage backend may point (SECURITY_AUDIT.md M-4). A NAS mount path must resolve
+  // (symlinks followed) inside this directory, or it is refused. Required for NAS in production;
+  // when unset outside production any path is accepted (dev convenience, e.g. the check scripts).
+  STORAGE_NAS_ROOT: z.string().trim().min(1).optional(),
+  // R2 endpoints must be https://<account>.r2.cloudflarestorage.com (or a jurisdiction subdomain of
+  // it). Any other host must be listed here explicitly (comma-separated hostnames), e.g. for an
+  // S3-compatible test server. Nothing else is ever contacted.
+  STORAGE_R2_ALLOWED_HOSTS: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),
+
   JWT_ACCESS_SECRET: z.string().min(1, "JWT_ACCESS_SECRET is required"),
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().int().positive().default(24),
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(60),
+  // Failures are counted per (email, IP): LOGIN_MAX_ATTEMPTS locks that pair, never the account.
   LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
+  // Distributed guessing: past this many failures on one account (all IPs) within the lockout
+  // window, only IPs this account signed in from in the last LOGIN_TRUSTED_IP_DAYS may still try.
+  LOGIN_MAX_ATTEMPTS_PER_ACCOUNT: z.coerce.number().int().positive().default(50),
+  LOGIN_TRUSTED_IP_DAYS: z.coerce.number().int().positive().default(30),
 
   // Upload & OCR (Module 6).
   // 120MB — a margin above the 100MB target (UPL-7). Files over this are rejected with a clear
   // message before any bytes are stored.
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(125829120),
+  // Uploads are held in memory whole, so these bound memory (SECURITY_AUDIT.md M-5): at most
+  // MAX_CONCURRENT_UPLOADS × MAX_UPLOAD_BYTES per API process (8 × 120 MB ≈ 1 GB by default), and no
+  // single account can take more than MAX_CONCURRENT_UPLOADS_PER_USER of those slots. The web client
+  // uploads one file at a time, so normal use never reaches either. Over the limit → 429, retry.
+  MAX_CONCURRENT_UPLOADS: z.coerce.number().int().positive().default(8),
+  MAX_CONCURRENT_UPLOADS_PER_USER: z.coerce.number().int().positive().default(2),
   // PDF page ceiling for OCR — an oversized scan is skipped rather than allowed to stall the queue.
   OCR_MAX_PAGES: z.coerce.number().int().positive().default(50),
+
+  // Daily retention run (RET-3): auto-delete into trash, then the automatic trash purge. Run by the
+  // retention worker (`npm run worker:retention`). Local wall-clock time HH:MM in the given zone.
+  RETENTION_JOB_TIME: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "RETENTION_JOB_TIME must be HH:MM (24-hour)")
+    .default("02:00"),
+  RETENTION_JOB_TIME_ZONE: z
+    .string()
+    .default("Asia/Kolkata")
+    .refine(isValidTimeZone, { message: "RETENTION_JOB_TIME_ZONE must be an IANA time zone, e.g. Asia/Kolkata" }),
 
   // Email — if BREVO_API_KEY is unset, mail is logged to the console instead of sent.
   BREVO_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("noreply@abateas.app"),
-  EMAIL_FROM_NAME: z.string().default("DMS"),
+  EMAIL_FROM_NAME: z.string().default("Edoc"),
   // Suppress all outbound mail (test runs) — belt-and-braces alongside the console fallback, so a
   // real BREVO_API_KEY in .env doesn't send during automated tests.
   MAIL_DISABLED: z
@@ -65,7 +100,7 @@ export type Env = z.infer<typeof envSchema>;
 export function loadEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
-    console.error("Invalid environment configuration:", parsed.error.flatten().fieldErrors);
+    console.error("Invalid environment configuration:", z.flattenError(parsed.error).fieldErrors);
     process.exit(1);
   }
   return parsed.data;

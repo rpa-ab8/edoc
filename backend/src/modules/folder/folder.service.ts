@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { logAuditEvent } from "../../lib/audit.js";
+import { folderAndAncestors, inheritedFolderHolds, legalHoldAuthority, loadHoldIndex } from "../../lib/legal-hold.js";
 import {
   confidentialFolderIdsToExclude,
   resolveEffectivePermissions,
@@ -35,6 +36,8 @@ export interface FolderNode {
   isConfidential: boolean;
   subfolderCount: number;
   documentCount: number;
+  legalHold: "held" | "inherited" | null;
+  legalHoldId: string | null;
 }
 
 async function requireDepartment(deps: Deps, actor: PermissionActor, departmentId: string) {
@@ -93,6 +96,16 @@ export async function listFolders(deps: Deps, actor: PermissionActor, department
   };
 
   const visible = folders.filter((f) => isVisible(f.id));
+  const holds = await loadHoldIndex(prisma, actor.organizationId, departmentId);
+  // Active holds placed on a folder itself, by folder — the id lets an authorised caller remove it.
+  const directHolds = new Map(
+    (
+      await prisma.legalHold.findMany({
+        where: { organizationId: actor.organizationId, departmentId, folderId: { not: null }, removedAt: null },
+        select: { id: true, folderId: true },
+      })
+    ).map((h) => [h.folderId!, h.id]),
+  );
 
   const counts = await Promise.all(
     visible.map(async (folder) => ({
@@ -112,18 +125,22 @@ export async function listFolders(deps: Deps, actor: PermissionActor, department
       isConfidential: folder.isConfidential,
       subfolderCount: count.subfolderCount,
       documentCount: count.documentCount,
+      // RET-5: "held" = this folder carries a hold; "inherited" = a folder above it does.
+      legalHold: directHolds.has(folder.id) ? "held" : holds.coveredFolderIds.has(folder.id) ? "inherited" : null,
+      legalHoldId: directHolds.get(folder.id) ?? null,
     };
   });
 }
 
 /** Root → folder, for the breadcrumb. Refuses a folder the actor may not see. */
-export async function folderPath(deps: Deps, actor: PermissionActor, folderId: string) {
+export async function folderPath(deps: Deps, actor: PermissionActor, folderId: string, departmentId?: string) {
   // A folder id belonging to another organization must surface as an ordinary `folder_not_found`,
   // not as a raw Prisma P2025 the global error handler would report as a 500 — the boundary is a
   // normal, expected outcome, and a 500 both looks like a defect and answers a different question
   // than a 404 does.
   const owner = await deps.prisma.folder.findFirst({
-    where: { id: folderId, organizationId: actor.organizationId },
+    // Bound to the department in the URL when the route supplies one (SECURITY_AUDIT.md H-1).
+    where: { id: folderId, organizationId: actor.organizationId, ...(departmentId ? { departmentId } : {}) },
     select: { departmentId: true },
   });
   if (!owner) throw new FolderError(404, "folder_not_found", "Folder not found.");
@@ -264,9 +281,15 @@ export async function createFolder(
   return folder;
 }
 
-async function loadFolder(deps: Deps, actor: PermissionActor, folderId: string) {
+/**
+ * Loads a folder, tenant-scoped. When `departmentId` is given (every HTTP route passes the one in
+ * its URL), the folder must also belong to that department — the route's permission gate was
+ * resolved for that department, so acting on a folder of a different one would apply the caller's
+ * role where they hold none (SECURITY_AUDIT.md H-1). Reported as not-found, never as forbidden.
+ */
+async function loadFolder(deps: Deps, actor: PermissionActor, folderId: string, departmentId?: string) {
   const folder = await deps.prisma.folder.findFirst({
-    where: { id: folderId, organizationId: actor.organizationId },
+    where: { id: folderId, organizationId: actor.organizationId, ...(departmentId ? { departmentId } : {}) },
   });
   if (!folder) throw new FolderError(404, "folder_not_found", "Folder not found.");
   return folder;
@@ -277,9 +300,10 @@ export async function renameFolder(
   actor: PermissionActor,
   folderId: string,
   name: string,
+  departmentId?: string,
 ) {
   const { prisma } = deps;
-  const folder = await loadFolder(deps, actor, folderId);
+  const folder = await loadFolder(deps, actor, folderId, departmentId);
 
   const clash = await prisma.folder.findFirst({
     where: {
@@ -315,9 +339,10 @@ export async function moveFolder(
   actor: PermissionActor,
   folderId: string,
   newParentId: string | null,
+  departmentId?: string,
 ) {
   const { prisma } = deps;
-  const folder = await loadFolder(deps, actor, folderId);
+  const folder = await loadFolder(deps, actor, folderId, departmentId);
 
   if (newParentId === folderId) {
     throw new FolderError(400, "invalid_move", "A folder can't be moved inside itself.");
@@ -376,6 +401,22 @@ export async function moveFolder(
     );
   }
 
+  // A Legal Hold on a folder covers its whole subtree (RET-5). Moving a subfolder out from under a
+  // held ancestor would silently release everything in it, so that move is refused; moving within
+  // the held tree, or moving a folder whose *own* hold travels with it, is fine.
+  const inherited = await inheritedFolderHolds(prisma, actor.organizationId, folderId);
+  if (inherited.length > 0) {
+    const destination = new Set(newParentId ? await folderAndAncestors(prisma, actor.organizationId, newParentId) : []);
+    const released = inherited.find((h) => !destination.has(h.folderId));
+    if (released) {
+      throw new FolderError(
+        409,
+        "legal_hold",
+        `This folder is covered by a Legal Hold on "${released.folderName}" and can't be moved outside it.`,
+      );
+    }
+  }
+
   // Confidentiality is a property of where a folder sits: moving into a confidential branch makes
   // it confidential, and it can never be downgraded by moving out again.
   const becomesConfidential = folder.isConfidential || (newParent?.isConfidential ?? false);
@@ -430,9 +471,9 @@ async function collectDescendants(deps: Deps, organizationId: string, folderId: 
   return descendants;
 }
 
-export async function deleteFolder(deps: Deps, actor: PermissionActor, folderId: string) {
+export async function deleteFolder(deps: Deps, actor: PermissionActor, folderId: string, departmentId?: string) {
   const { prisma } = deps;
-  const folder = await loadFolder(deps, actor, folderId);
+  const folder = await loadFolder(deps, actor, folderId, departmentId);
 
   const [childCount, documentCount] = await Promise.all([
     prisma.folder.count({ where: { parentFolderId: folderId } }),
@@ -452,7 +493,17 @@ export async function deleteFolder(deps: Deps, actor: PermissionActor, folderId:
       `This folder still holds ${documentCount} document${documentCount === 1 ? "" : "s"}.`,
     );
   }
+  // An active hold also covers documents filed here later (RET-5) — deleting the folder would end it.
+  const activeHold = await prisma.legalHold.findFirst({
+    where: { organizationId: actor.organizationId, folderId, removedAt: null },
+    select: { id: true },
+  });
+  if (activeHold) {
+    throw new FolderError(409, "legal_hold", "This folder is under a Legal Hold and can't be deleted.");
+  }
 
+  // Released holds go with the folder; their history stays in the audit trail.
+  await prisma.legalHold.deleteMany({ where: { organizationId: actor.organizationId, folderId } });
   await prisma.folderPermission.deleteMany({ where: { folderId } });
   await prisma.confidentialMember.deleteMany({ where: { folderId } });
   await prisma.folder.delete({ where: { id: folderId } });
@@ -496,6 +547,11 @@ export async function myPermissions(
     // "New subfolder" on a folder already at the limit — the API still enforces it, but offering a
     // button that can only fail is a worse experience than not offering it.
     subfolderDepthLimit: await effectiveDepthLimit(deps, departmentId, actor.organizationId),
+    // Whether the caller may place/remove a Legal Hold on this folder (RET-5): the department right,
+    // or — inside a confidential folder — being its Owner. Resolved here so the UI never guesses.
+    canManageLegalHold: folderId
+      ? (await legalHoldAuthority(deps.prisma, actor, departmentId, folderId)) === "allowed"
+      : false,
   };
 }
 
@@ -524,8 +580,8 @@ function restrictedKeysFrom(stored: unknown): PermissionKey[] {
   return ALL_PERMISSION_KEYS.filter((k) => map[k] === false);
 }
 
-async function loadOverridableFolder(deps: Deps, actor: PermissionActor, folderId: string) {
-  const folder = await loadFolder(deps, actor, folderId);
+async function loadOverridableFolder(deps: Deps, actor: PermissionActor, folderId: string, departmentId?: string) {
+  const folder = await loadFolder(deps, actor, folderId, departmentId);
   // Confidential folders are a distinct mode — inheritance is disabled entirely, so ordinary
   // role-based overrides don't apply there (Feature Spec §11 / §2A.6).
   if (folder.isConfidential) {
@@ -539,9 +595,14 @@ async function loadOverridableFolder(deps: Deps, actor: PermissionActor, folderI
  * and which keys (if any) this folder withholds from that role. Gated at the route to Department
  * Admins.
  */
-export async function listFolderPermissions(deps: Deps, actor: PermissionActor, folderId: string) {
+export async function listFolderPermissions(
+  deps: Deps,
+  actor: PermissionActor,
+  folderId: string,
+  departmentId?: string,
+) {
   const { prisma } = deps;
-  const folder = await loadOverridableFolder(deps, actor, folderId);
+  const folder = await loadOverridableFolder(deps, actor, folderId, departmentId);
 
   const [roles, overrides] = await Promise.all([
     prisma.role.findMany({
@@ -576,9 +637,10 @@ export async function setFolderPermission(
   folderId: string,
   roleId: string,
   restrict: PermissionKey[],
+  departmentId?: string,
 ) {
   const { prisma } = deps;
-  const folder = await loadOverridableFolder(deps, actor, folderId);
+  const folder = await loadOverridableFolder(deps, actor, folderId, departmentId);
 
   const role = await prisma.role.findFirst({
     where: { id: roleId, organizationId: actor.organizationId, departmentId: folder.departmentId },
@@ -611,7 +673,7 @@ export async function setFolderPermission(
         : `Restricted ${role.name} on ${folder.name} (${known.length} permission${known.length === 1 ? "" : "s"})`,
   });
 
-  return listFolderPermissions(deps, actor, folderId);
+  return listFolderPermissions(deps, actor, folderId, departmentId);
 }
 
 /** Removes a role's override on a folder — it inherits from its parent again. */
@@ -620,6 +682,7 @@ export async function clearFolderPermission(
   actor: PermissionActor,
   folderId: string,
   roleId: string,
+  departmentId?: string,
 ) {
-  return setFolderPermission(deps, actor, folderId, roleId, []);
+  return setFolderPermission(deps, actor, folderId, roleId, [], departmentId);
 }

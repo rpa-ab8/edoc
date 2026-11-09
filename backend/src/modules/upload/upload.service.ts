@@ -2,7 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { Env } from "../../config/env.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
-import { resolveFormat, ACCEPTED_EXTENSIONS } from "../../lib/upload-formats.js";
+import {
+  verifyUploadFormat,
+  extractPlainText,
+  ACCEPTED_EXTENSIONS,
+  type AcceptedFormat,
+} from "../../lib/upload-formats.js";
 import { enqueueOcr } from "../../lib/queue.js";
 import * as storageService from "../storage/storage.service.js";
 import * as documentService from "../document/document.service.js";
@@ -46,14 +51,6 @@ export interface UploadInput {
 }
 
 function validateFile(env: Env, file: IncomingFile) {
-  const format = resolveFormat(file.declaredMime, file.fileName);
-  if (!format) {
-    throw new UploadError(
-      400,
-      "unsupported_format",
-      `Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}.`,
-    );
-  }
   if (file.data.length === 0) {
     throw new UploadError(400, "empty_file", "The file is empty.");
   }
@@ -61,7 +58,35 @@ function validateFile(env: Env, file: IncomingFile) {
     const mb = Math.round(env.MAX_UPLOAD_BYTES / (1024 * 1024));
     throw new UploadError(413, "file_too_large", `File is larger than the ${mb}MB limit.`);
   }
-  return format;
+  // The file's bytes, not its name or declared type, decide what it is (SECURITY_AUDIT.md M-5).
+  const verdict = verifyUploadFormat(file.declaredMime, file.fileName, file.data);
+  if (!verdict.ok) {
+    const label = (f?: AcceptedFormat) => (f?.extensions[0] ?? "file").toUpperCase();
+    const message =
+      verdict.code === "unsupported_format"
+        ? `Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}.`
+        : verdict.code === "unrecognised_content"
+          ? `This file isn't a valid ${label(verdict.claimed)} — its contents don't match. It may be damaged or renamed.`
+          : `This file is named as a ${label(verdict.claimed)} but its contents are a ${label(verdict.detected)}. Rename it to .${verdict.detected!.extensions[0]} and upload again.`;
+    throw new UploadError(400, verdict.code, message);
+  }
+  return verdict.format;
+}
+
+/** Only images and PDFs go to the OCR worker; Office files have no text pass, and text files carry
+ *  their own text, stored at upload. */
+function needsOcr(format: AcceptedFormat): boolean {
+  return format.ocr === "image" || format.ocr === "pdf";
+}
+
+/**
+ * The version's text-extraction fields at upload: a Markdown / plain-text file *is* its searchable
+ * text, so it is stored now (status `done`) and the document is fully searchable without the OCR
+ * worker; formats the worker handles start `pending`; Office files are `done` with no text.
+ */
+function ocrFields(format: AcceptedFormat, data: Buffer): { ocrStatus: "pending" | "done"; ocrText?: string | null } {
+  if (format.ocr === "text") return { ocrStatus: "done", ocrText: extractPlainText(data) || null };
+  return { ocrStatus: needsOcr(format) ? "pending" : "done" };
 }
 
 /**
@@ -86,6 +111,15 @@ async function storeBytes(deps: Deps, actor: PermissionActor, file: IncomingFile
  * missing detail never holds up the batch); the shared-fields bar is applied client-side.
  */
 export async function uploadDocument(deps: Deps, actor: PermissionActor, input: UploadInput) {
+  // The target folder must belong to the department the route's `documents.upload` gate was resolved
+  // for (SECURITY_AUDIT.md H-1). Checked before any bytes are stored, so a refused upload never
+  // leaves an orphaned object in storage. Reported as not-found, never as forbidden.
+  const folder = await deps.prisma.folder.findFirst({
+    where: { id: input.folderId, organizationId: actor.organizationId, departmentId: input.departmentId },
+    select: { id: true },
+  });
+  if (!folder) throw new UploadError(404, "folder_not_found", "Folder not found.");
+
   const format = validateFile(deps.env, input.file);
   const checksum = createHash("sha256").update(input.file.data).digest("hex");
   const canonicalMime = format.mimeType;
@@ -126,11 +160,11 @@ export async function uploadDocument(deps: Deps, actor: PermissionActor, input: 
           fileSize: input.file.data.length,
           mimeType: canonicalMime,
           checksum,
-          ocrStatus: format.ocr === "none" ? "done" : "pending",
+          ...ocrFields(format, input.file.data),
         },
         changeNote: input.changeNote ?? null,
       });
-      if (format.ocr !== "none" && document.currentVersionId) {
+      if (needsOcr(format) && document.currentVersionId) {
         await enqueueOcr(deps.env, document.currentVersionId);
       }
       return { action: "new_version" as const, document };
@@ -156,11 +190,11 @@ export async function uploadDocument(deps: Deps, actor: PermissionActor, input: 
         fileSize: input.file.data.length,
         mimeType: canonicalMime,
         checksum,
-        ocrStatus: format.ocr === "none" ? "done" : "pending",
+        ...ocrFields(format, input.file.data),
       },
       allowIncomplete: true,
     });
-    if (format.ocr !== "none" && document.currentVersionId) {
+    if (needsOcr(format) && document.currentVersionId) {
       await enqueueOcr(deps.env, document.currentVersionId);
     }
     return { action: "created" as const, document };
@@ -192,11 +226,11 @@ export async function uploadNewVersion(
         fileSize: file.data.length,
         mimeType: canonicalMime,
         checksum,
-        ocrStatus: format.ocr === "none" ? "done" : "pending",
+        ...ocrFields(format, file.data),
       },
       changeNote: changeNote ?? null,
     });
-    if (format.ocr !== "none" && document.currentVersionId) {
+    if (needsOcr(format) && document.currentVersionId) {
       await enqueueOcr(deps.env, document.currentVersionId);
     }
     return { document };

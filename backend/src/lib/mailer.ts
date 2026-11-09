@@ -76,15 +76,15 @@ export async function sendMail(env: Env, mail: Mail): Promise<void> {
 export function sendVerificationEmail(env: Env, to: string, verifyUrl: string): Promise<void> {
   return sendMail(env, {
     to,
-    subject: "Verify your DMS account",
-    text: `Welcome to DMS. Verify your email by visiting:\n${verifyUrl}\n\nThis link expires soon.`,
+    subject: "Verify your Edoc account",
+    text: `Welcome to Edoc. Verify your email by visiting:\n${verifyUrl}\n\nThis link expires soon.`,
   });
 }
 
 export function sendPasswordResetEmail(env: Env, to: string, resetUrl: string): Promise<void> {
   return sendMail(env, {
     to,
-    subject: "Reset your DMS password",
+    subject: "Reset your Edoc password",
     text: `Reset your password by visiting:\n${resetUrl}\n\nIf you didn't request this, ignore this email.`,
   });
 }

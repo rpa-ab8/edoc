@@ -10,6 +10,8 @@
  * DEV ONLY, and it writes to real storage. Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
+import { docxBytes } from "./_fixture-files.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -91,10 +93,10 @@ const nameVal = (v: string) => [
   { fieldDefId: F("Employee ID"), value: "E-100" },
 ];
 
-// Arbitrary bytes; format is resolved from the extension, so a real PDF/DOCX byte stream isn't
-// needed to exercise storage, checksum, duplicate detection and metadata.
-const docxBytes = Buffer.from("PK\u0003\u0004 zz upload test docx payload " + Date.now());
-const docxFile = { fileName: "contract-a.docx", declaredMime: "application/octet-stream", data: docxBytes };
+// A real (minimal) DOCX: uploads are verified by content (SECURITY_AUDIT.md M-5), so the bytes must
+// genuinely be the format the name claims. Salted so the checksum is unique per run.
+const docxPayload = docxBytes("zz upload test docx payload " + Date.now());
+const docxFile = { fileName: "contract-a.docx", declaredMime: "application/octet-stream", data: docxPayload };
 
 try {
   // ── a first upload creates a document and stores the file ──
@@ -114,7 +116,7 @@ try {
   const driver = await getActiveStorageDriver(deps, org.id);
   const stored = await prisma.version.findFirstOrThrow({ where: { documentId: doc1.id } });
   const readBack = await driver.get(stored.storageRef);
-  check("the stored file reads back byte-identical", Buffer.from(readBack).equals(docxBytes));
+  check("the stored file reads back byte-identical", Buffer.from(readBack).equals(docxPayload));
   check("a checksum was recorded", !!stored.checksum && stored.checksum.length === 64);
 
   // ── duplicate detection (UPL-4) ──
@@ -147,7 +149,14 @@ try {
     onDuplicate: "new_version",
     duplicateOfDocumentId: doc1.id,
   });
-  check("add-as-new-version adds a version to the original", asVersion.action === "new_version" && asVersion.document!.versions.length === 2);
+  // Counted in the DB: this uploader's role lacks `documents.version_history`, so the response
+  // itself carries only the current version (SECURITY_AUDIT.md H-2).
+  const asVersionCount = await prisma.version.count({ where: { documentId: doc1.id } });
+  check("add-as-new-version adds a version to the original", asVersion.action === "new_version" && asVersionCount === 2, `${asVersionCount}`);
+  check(
+    "…and the response carries only the current version (no version_history)",
+    asVersion.document!.versions.length === 1 && asVersion.document!.versions[0].isCurrent,
+  );
   check("and does not change the document ID", asVersion.document!.documentRef === doc1.documentRef);
 
   const keepBoth = await uploads.uploadDocument(deps, uploader, {
@@ -166,7 +175,7 @@ try {
     folderId: folder.id,
     documentTypeId: docType.id,
     fieldValues: [], // both required fields missing — must still save
-    file: { fileName: "incomplete.docx", declaredMime: "application/octet-stream", data: Buffer.from("zz incomplete " + Date.now()) },
+    file: { fileName: "incomplete.docx", declaredMime: "application/octet-stream", data: docxBytes("zz incomplete " + Date.now()) },
   });
   check("an upload missing required fields still saves", incomplete.action === "created");
   const needs = await documents.listNeedsDetails(deps, uploader, dept.id);
@@ -185,7 +194,8 @@ try {
       folderId: folder.id,
       documentTypeId: docType.id,
       fieldValues: nameVal("Bad"),
-      file: { fileName: "notes.txt", declaredMime: "text/plain", data: Buffer.from("hello") },
+      // .txt is accepted since 2026-11-07 (Markdown / plain text); a CSV is still not a supported type.
+      file: { fileName: "data.csv", declaredMime: "text/csv", data: Buffer.from("a,b\n1,2\n") },
     }),
   );
   await expectError("a file over the size limit is refused", "file_too_large", () =>
@@ -211,6 +221,10 @@ try {
     file: { fileName: "scan.pdf", declaredMime: "application/pdf", data: Buffer.from("%PDF-1.4 zz " + Date.now()) },
   });
   check("a pdf upload is left pending for the OCR worker", pdf.document!.versions[0].ocrStatus === "pending");
+} catch (err) {
+  // Without this, an exception mid-suite skipped every later check yet still exited 0 — which hid a
+  // broken fixture reference for a while. An unexpected error is a failure.
+  check("unexpected error", false, String((err as Error).stack ?? err));
 } finally {
   // ── teardown: remove stored objects from real storage, revert usage, drop DB rows ──
   try {
@@ -228,7 +242,7 @@ try {
   }
 
   await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });
   await prisma.version.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.document.deleteMany({ where: { departmentId: dept.id } });

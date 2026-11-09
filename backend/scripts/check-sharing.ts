@@ -9,6 +9,8 @@
  * DEV ONLY, writes to real storage. Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
+import { pdfBytes } from "./_fixture-files.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -159,7 +161,7 @@ const confidentialFolder = await prisma.folder.create({
 });
 await prisma.confidentialMember.create({ data: { folderId: confidentialFolder.id, userId: sharerUser.id } });
 
-const bytes = Buffer.from("zz sharing payload " + Date.now());
+const bytes = pdfBytes("zz sharing payload " + Date.now());
 
 try {
   const up = await uploads.uploadDocument(fileDeps, sharer, {
@@ -299,7 +301,7 @@ try {
   // ── confidential documents can never leave by external link (§11.2) ──
   // Distinct bytes so UPL-4 duplicate detection (same-checksum within a department) doesn't fire
   // and suppress the create.
-  const vaultBytes = Buffer.from("zz vault payload " + Date.now());
+  const vaultBytes = pdfBytes("zz vault payload " + Date.now());
   const confUp = await uploads.uploadDocument(fileDeps, sharer, {
     departmentId: deptA.id,
     folderId: confidentialFolder.id,
@@ -365,7 +367,7 @@ try {
   await prisma.share.deleteMany({ where: { document: { departmentId: { in: deptIds } } } });
   await prisma.confidentialMember.deleteMany({ where: { folder: { departmentId: { in: deptIds } } } });
   await prisma.fieldValue.deleteMany({ where: { document: { departmentId: { in: deptIds } } } });
-  await prisma.auditEvent.deleteMany({ where: { departmentId: { in: deptIds } } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: { in: deptIds } } });
   await prisma.document.updateMany({ where: { departmentId: { in: deptIds } }, data: { currentVersionId: null } });
   await prisma.version.deleteMany({ where: { document: { departmentId: { in: deptIds } } } });
   await prisma.document.deleteMany({ where: { departmentId: { in: deptIds } } });

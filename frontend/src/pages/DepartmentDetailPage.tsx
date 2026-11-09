@@ -11,6 +11,7 @@ import {
 } from "../components/department/DocumentTypeEditor";
 import { RoleMatrixEditor, isDepartmentAdminRole } from "../components/department/RoleMatrixEditor";
 import { RulesEditor } from "../components/department/RulesEditor";
+import { RetentionPanel } from "../components/department/RetentionPanel";
 import { ChevronRightIcon, MailIcon, TrashIcon, UsersIcon } from "../components/icons";
 import { apiRequest, ApiRequestError } from "../lib/api";
 import {
@@ -33,7 +34,7 @@ import {
 
 const CARD_SHADOW = "shadow-card";
 
-const TABS = ["Overview", "Document types", "Roles", "Members", "Rules"] as const;
+const TABS = ["Overview", "Document types", "Roles", "Members", "Rules", "Retention"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DepartmentDetailPage() {
@@ -70,6 +71,10 @@ export function DepartmentDetailPage() {
   const canInvite = perms["members.invite"] === true;
   const canChangeRole = perms["members.change_role"] === true;
   const canRemove = perms["members.remove"] === true;
+  // PRD v1.2 Department Admin rights — deliberately not part of the Super Admin's baseline.
+  const canManageAutoDelete = perms["retention.manage_auto_delete"] === true;
+  const canViewUpcoming = perms["retention.view_upcoming_deletions"] === true;
+  const canManageHolds = perms["retention.manage_legal_hold"] === true;
 
   // Each tab appears only for someone who can act on it, so a manager who may only invite lands on
   // Members instead of a page of forms that would refuse to save. Roles stay a Super-Admin concern:
@@ -87,6 +92,7 @@ export function DepartmentDetailPage() {
     if (t === "Roles") return isSuperAdmin;
     if (t === "Overview" || t === "Rules") return canEditSettings;
     if (t === "Document types") return canEditTypes;
+    if (t === "Retention") return canManageAutoDelete || canViewUpcoming || canManageHolds;
     return true;
   });
   const activeTab: Tab = visibleTabs.includes(tab) ? tab : (visibleTabs[0] ?? "Members");
@@ -384,6 +390,15 @@ export function DepartmentDetailPage() {
               </button>
             </div>
           </div>
+        )}
+
+        {activeTab === "Retention" && (
+          <RetentionPanel
+            departmentId={departmentId}
+            canManageAutoDelete={canManageAutoDelete}
+            canViewUpcoming={canViewUpcoming}
+            canManageHolds={canManageHolds}
+          />
         )}
 
         {activeTab === "Members" && (

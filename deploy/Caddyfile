@@ -1,4 +1,4 @@
-# DMS public entrypoint. Values come from the web container's environment (.env.production):
+# Edoc public entrypoint. Values come from the web container's environment (.env.production):
 #   SITE_ADDRESS     dms.example.com  → automatic HTTPS via Let's Encrypt
 #                    http://localhost for a local smoke test (no TLS; no port here — the host
 #                    port comes from HTTP_PORT in the compose port mapping)

@@ -22,7 +22,15 @@ export interface SearchParams {
   documentTypeId?: string;
   quickView?: QuickView;
   filters?: SearchFilter[];
+  /** Standard Upload Date filter (SRCH-6): YYYY-MM-DD, inclusive, in the organization's time zone. */
+  uploadedFrom?: string;
+  uploadedTo?: string;
   limit?: number;
+}
+
+/** The client-side twin of the server's check, so the panel can say so before searching. */
+export function uploadDateRangeError(from: string, to: string): string | null {
+  return from && to && from > to ? 'The Upload Date "From" can\'t be after "To".' : null;
 }
 
 export interface SearchResult {
@@ -35,7 +43,9 @@ export interface SearchResult {
   fileName: string | null;
   fileSize: number | null;
   mimeType: string | null;
+  uploadedAt: string;
   updatedAt: string;
+  legalHold: boolean;
 }
 
 export const searchDocuments = (departmentId: string, params: SearchParams) =>

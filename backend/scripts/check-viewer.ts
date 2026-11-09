@@ -8,6 +8,8 @@
  * DEV ONLY, writes to real storage. Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
+import { docxBytes } from "./_fixture-files.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -92,7 +94,7 @@ const stranger: PermissionActor = { userId: strangerUser.id, organizationId: org
 
 const folder = await prisma.folder.create({ data: { organizationId: org.id, departmentId: dept.id, name: "General", depth: 0 } });
 
-const bytes = Buffer.from("zz viewer test payload " + Date.now());
+const bytes = docxBytes("zz viewer test payload " + Date.now());
 
 try {
   const up = await uploads.uploadDocument(fileDeps, uploader, {
@@ -153,7 +155,7 @@ try {
     console.error("[cleanup] storage issue:", err);
   }
   await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });
   await prisma.version.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.document.deleteMany({ where: { departmentId: dept.id } });

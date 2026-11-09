@@ -1,8 +1,8 @@
-# Document Management System — Scope & MVP Definition
+# Edoc — Scope & MVP Definition
 
 **Status:** Draft for stakeholder review
 **Purpose:** To fix what is built in the first release, what follows, and what is explicitly excluded — so that the PRD can go deep only where it matters.
-**Companion document:** *DMS Feature & Flow Specification* (functional design detail)
+**Companion document:** *Edoc Feature & Flow Specification* (functional design detail)
 
 > **How to use this document.** Sections 6 and 7 record decisions now confirmed with stakeholders. Sections 2–5 define the release scope. The remaining open item is the specific compliance and retention detail required before Release 2 (Section 6.2).
 
@@ -10,7 +10,7 @@
 
 ## 1. Product Summary
 
-A universal Document Management System serving multiple sectors — healthcare, education, accounts, HR and legal — from a single codebase. Sector differences are handled through configuration (document types, metadata fields, roles, vocabulary, rules) rather than custom development, so a new department or sector is an administrative setup task rather than a development project.
+Edoc is a universal document management system serving multiple sectors — healthcare, education, accounts, HR and legal — from a single codebase. Sector differences are handled through configuration (document types, metadata fields, roles, vocabulary, rules) rather than custom development, so a new department or sector is an administrative setup task rather than a development project.
 
 **Primary objectives:** centralised storage, fast retrieval, controlled access, and an audit trail — with an interface deliberately optimised for minimal clicks on upload and search.
 
@@ -64,7 +64,7 @@ Everything not required to satisfy that sentence is deferred. Two consequences w
 - Bulk upload with a shared-fields bar applied across the batch.
 - Duplicate detection offering "add as new version".
 - Non-blocking save with a "needs details" queue.
-- Supported formats: PDF, images (JPEG/PNG), DOCX, XLSX.
+- Supported formats: PDF, images (JPEG/PNG), DOCX, XLSX, Markdown (.md/.markdown) and plain text (.txt) — the last two added 2026-11-07 by the product owner.
 - Maximum upload size configured with margin above 100 MB; OCR subject to a page ceiling.
 - **OCR** on scans and PDFs so document *content* is searchable.
 - *Deferred:* auto-extraction of field values with confidence tiers.
@@ -111,7 +111,7 @@ Everything not required to satisfy that sentence is deferred. Two consequences w
 Ordered by expected priority.
 
 1. **Audit export** — exporting audit records for statutory audit and external review. *(The audit viewer itself is in R1.)*
-2. **Retention and lifecycle automation** — retention periods, auto-archive, retention locks, expiry and renewal reminders. *Depends on compliance decisions (Section 6.2).*
+2. **Retention and lifecycle automation** — per-document-type retention periods, auto-archive, retention locks, expiry and renewal reminders. *Depends on compliance decisions (Section 6.2).* *(v1.2: the per-department auto-delete period and Legal Hold moved into Release 1 — see 6.2.)*
 3. **Notifications** — in-app and email; share notifications, expiry reminders, approval alerts.
 4. **Workflow and approvals** — document states, routing, approval queue. *(Move to R1 only if a launch-critical approval process is identified — Accounts invoice approval is the likely candidate.)*
 5. **Auto-extraction** — OCR-driven field pre-fill with confidence tiers and confirmation.
@@ -195,7 +195,9 @@ Sequence:
 *Deferred to Release 2:* periodic background health checks of live storage connections (credentials rotate, mounts drop, buckets are deleted after setup). In Release 1, a failed live upload must surface a clear storage-error state rather than a silent failure.
 
 ### 6.2 Compliance and retention
-**No automated retention or deletion in Release 1.** Retention periods, auto-archive and retention locks are deferred to Release 2, at which point the specific periods per document type must be supplied. Audit logging (R1) is unaffected. Applicable data-protection obligations still to be confirmed for R2 (DPDP Act 2023 assumed).
+**Amended by PRD v1.2 (2026-10-30).** Release 1 now includes a deliberately narrow automated deletion: an optional, per-department **auto-delete period** in whole years (off by default, never switched on by a template, set only by that department's Department Admin), counted from each document's immutable Upload Date; a **daily job** that moves expired documents to Trash; the existing trash window then applies and a daily **automatic trash purge** removes items after 30 days; and **Legal Hold** on documents and folders, which stops every form of deletion. See PRD §8.14 (RET-1..8), SRCH-6 and the amended TRSH-4.
+
+Still Release 2: per-document-type retention periods, retention locks, auto-archive, expiry and renewal reminders — these still need the compliance detail (document type → period). Audit logging is unaffected. Applicable data-protection obligations still to be confirmed (DPDP Act 2023 assumed).
 
 ### 6.3 Data migration
 **No import or migration module in Release 1.** Existing documents are uploaded manually by users. A bulk import capability is a future consideration, not a current requirement — which removes the project's single largest schedule risk from this release.
@@ -348,7 +350,7 @@ Confirming that all originally stated functional requirements are accounted for 
 | BRD requirement | Status |
 |---|---|
 | User authentication with roles and permissions | R1 — Section 3.7 |
-| Upload in multiple formats (PDF, JPEG, DOCX, XLSX) | R1 — Section 3.4 |
+| Upload in multiple formats (PDF, JPEG, PNG, DOCX, XLSX, Markdown, plain text) | R1 — Section 3.4 |
 | Advanced search by data, tags, file type | R1 — Section 3.5 |
 | Auto-tagging based on predefined rules | R1 — department rules |
 | Version control with history | R1 — Section 3.3 |
@@ -360,7 +362,7 @@ Confirming that all originally stated functional requirements are accounted for 
 | Secure access with encryption | R1 — Section 3.9 |
 | Data tagging and indexing | R1 — Sections 3.2, 3.4 |
 | Document expiry and renewal reminders | **R2** — depends on compliance decisions (6.2) |
-| Document retention policies | **R2** — depends on compliance decisions (6.2) |
+| Document retention policies | **R1 (v1.2): per-department auto-delete + Legal Hold.** Per-document-type policies and retention locks: **R2** — depends on compliance decisions (6.2) |
 | Long-term secure archival | **R2** — with retention automation |
 | Integration with EMR, HRMS, Finance | **Out of scope** — deferred by agreement (6.5) |
 

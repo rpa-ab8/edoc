@@ -5,6 +5,7 @@ import * as sharingService from "./sharing.service.js";
 import { SharingError } from "./sharing.service.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
 import { RATE_LIMITS } from "../../lib/rate-limits.js";
+import { contentTypeHeader } from "../../lib/upload-formats.js";
 
 const permissionSchema = z.enum(["view", "download"]);
 
@@ -180,7 +181,8 @@ export async function sharingRoutes(app: FastifyInstance, opts: { prisma: Prisma
     const mode = download === "1" || download === "true" ? "download" : "preview";
     try {
       const file = await sharingService.fetchLinkFile(fileDeps, token, mode);
-      reply.header("Content-Type", file.mimeType);
+      reply.header("Content-Type", contentTypeHeader(file.mimeType));
+      reply.header("X-Content-Type-Options", "nosniff");
       reply.header("Content-Length", file.buffer.length);
       reply.header(
         "Content-Disposition",

@@ -1,6 +1,13 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { AuditAction, Prisma, PrismaClient, TrashSource } from "@prisma/client";
 import type { Env } from "../../config/env.js";
-import { logAuditEvent } from "../../lib/audit.js";
+import { SYSTEM_ACTOR, auditActorName, logAuditEvent } from "../../lib/audit.js";
+import {
+  RESTORED_AFTER_AUTO_DELETE_REASON,
+  activeHoldsCovering,
+  isUnderLegalHold,
+  legalHoldAuthority,
+  loadHoldIndex,
+} from "../../lib/legal-hold.js";
 import { generateDocumentRef } from "../../lib/document-ref.js";
 import { refreshDocumentSearchVector } from "../../lib/search-vector.js";
 import { getActiveStorageDriver } from "../storage/storage.service.js";
@@ -16,6 +23,7 @@ import {
   type PermissionKey,
   type PermissionMap,
 } from "../../lib/permissions.js";
+
 
 export class DocumentError extends Error {
   constructor(
@@ -216,12 +224,21 @@ async function resolveDocumentPermissions(
  * A document the actor may not view is reported as `document_not_found`, never `forbidden`: a
  * confidential document is invisible entirely, so a distinct error would confirm it exists.
  */
-async function loadDocumentForActor(
+interface DocumentAccess {
+  document: LoadedDocument;
+  map: PermissionMap;
+  isConfidential: boolean;
+  viaShare: boolean;
+}
+
+/** `loadDocumentForActor`, also returning the permission map that admitted the actor — so the
+ *  response can be shaped to what that map allows (H-2). */
+async function loadDocumentAccess(
   deps: Deps,
   actor: PermissionActor,
   documentId: string,
   actionKey: PermissionKey,
-): Promise<LoadedDocument> {
+): Promise<DocumentAccess> {
   const document = await deps.prisma.document.findFirst({
     where: { id: documentId, organizationId: actor.organizationId },
     include: documentInclude,
@@ -230,7 +247,7 @@ async function loadDocumentForActor(
     throw new DocumentError(404, "document_not_found", "Document not found.");
   }
 
-  const { map } = await resolveDocumentPermissions(deps, actor, document);
+  const { map, isConfidential, viaShare } = await resolveDocumentPermissions(deps, actor, document);
 
   if (map["documents.view"] !== true) {
     throw new DocumentError(404, "document_not_found", "Document not found.");
@@ -241,39 +258,78 @@ async function loadDocumentForActor(
     throw new DocumentError(403, "forbidden", "You don't have access to this action.");
   }
 
-  return document;
+  return { document, map, isConfidential, viaShare };
 }
 
-function shapeDocument(document: LoadedDocument) {
+async function loadDocumentForActor(
+  deps: Deps,
+  actor: PermissionActor,
+  documentId: string,
+  actionKey: PermissionKey,
+): Promise<LoadedDocument> {
+  return (await loadDocumentAccess(deps, actor, documentId, actionKey)).document;
+}
+
+/** What a response may reveal, derived from the permission map that admitted the caller (H-2). */
+interface DocumentView {
+  /** `documents.version_history`: the full version chain (with uploaders) and the activity feed. */
+  history: boolean;
+  /** Reached only through a share: the home department's internal identifiers (folder, department,
+   *  document type, field definitions) stay out of the response — a share points at one document,
+   *  never at the folder it lives in. */
+  viaShare: boolean;
+}
+
+function viewFor(access: Pick<DocumentAccess, "map" | "viaShare">): DocumentView {
+  return { history: access.map["documents.version_history"] === true, viaShare: access.viaShare };
+}
+
+/** The full shape — only for the creator of a brand-new document, who uploaded its one version. */
+const FULL_VIEW: DocumentView = { history: true, viaShare: false };
+
+function shapeDocument(document: LoadedDocument, view: DocumentView) {
+  const shapeVersion = (v: LoadedDocument["versions"][number]) => ({
+    id: v.id,
+    versionNumber: v.versionNumber,
+    fileName: v.fileName,
+    fileSize: v.fileSize,
+    mimeType: v.mimeType,
+    ocrStatus: v.ocrStatus,
+    changeNote: view.history ? v.changeNote : null,
+    isCurrent: v.id === document.currentVersionId,
+    uploadedBy: view.history ? v.uploadedBy : null,
+    createdAt: v.createdAt,
+  });
+  // Without version history the caller gets the current version only (needed to preview it) — not
+  // the chain, not who uploaded what.
+  const versions = view.history
+    ? document.versions
+    : document.versions.filter((v) => v.id === document.currentVersionId);
+
   return {
     id: document.id,
     documentRef: document.documentRef,
     titleValue: document.titleValue,
-    departmentId: document.departmentId,
-    folderId: document.folderId,
+    departmentId: view.viaShare ? null : document.departmentId,
+    folderId: view.viaShare ? null : document.folderId,
     status: document.status,
-    documentType: document.documentType,
+    documentType: view.viaShare
+      ? { id: null, name: document.documentType.name, idCode: document.documentType.idCode }
+      : document.documentType,
     currentVersionId: document.currentVersionId,
+    // The Upload Date (RET-2) — fixed at first upload, the clock auto-delete counts from.
+    uploadedAt: document.uploadedAt,
+    trashSource: document.trashSource,
+    trashReason: view.viaShare ? null : document.trashReason,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
     fieldValues: document.fieldValues.map((fv) => ({
-      fieldDefId: fv.fieldDefId,
+      fieldDefId: view.viaShare ? null : fv.fieldDefId,
       label: fv.fieldDef.label,
       fieldType: fv.fieldDef.fieldType,
       value: fv.value,
     })),
-    versions: document.versions.map((v) => ({
-      id: v.id,
-      versionNumber: v.versionNumber,
-      fileName: v.fileName,
-      fileSize: v.fileSize,
-      mimeType: v.mimeType,
-      ocrStatus: v.ocrStatus,
-      changeNote: v.changeNote,
-      isCurrent: v.id === document.currentVersionId,
-      uploadedBy: v.uploadedBy,
-      createdAt: v.createdAt,
-    })),
+    versions: versions.map(shapeVersion),
   };
 }
 
@@ -310,6 +366,9 @@ export async function createDocument(deps: Deps, actor: PermissionActor, input: 
     input.allowIncomplete ?? false,
   );
   const year = new Date().getFullYear();
+  // One instant for the document's Upload Date and its first version, so "the date it was first
+  // uploaded" (RET-2) is exactly version 1's — the same rule the migration backfilled by.
+  const uploadedAt = new Date();
 
   const created = await prisma.$transaction(async (tx) => {
     const documentRef = await generateDocumentRef(tx, {
@@ -330,6 +389,7 @@ export async function createDocument(deps: Deps, actor: PermissionActor, input: 
         documentRef,
         titleValue,
         status: "active",
+        uploadedAt,
       },
     });
 
@@ -338,6 +398,7 @@ export async function createDocument(deps: Deps, actor: PermissionActor, input: 
         organizationId: actor.organizationId,
         documentId: document.id,
         versionNumber: 1,
+        createdAt: uploadedAt,
         storageRef: input.file.storageRef,
         fileName: input.file.fileName,
         fileSize: input.file.fileSize,
@@ -378,7 +439,7 @@ export async function createDocument(deps: Deps, actor: PermissionActor, input: 
 
   // Return without re-checking `documents.view`: the route already enforced `documents.upload`,
   // and a role may hold upload without view — re-gating here would wrongly hide what was just made.
-  return shapeDocument(await loadRawDocument(deps, actor.organizationId, created.id));
+  return shapeDocument(await loadRawDocument(deps, actor.organizationId, created.id), FULL_VIEW);
 }
 
 // ─────────────────────────── new version ───────────────────────────
@@ -396,7 +457,8 @@ export async function addVersion(
   input: { file: VersionFileInput; changeNote?: string | null },
 ) {
   const { prisma } = deps;
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.upload_version");
+  const access = await loadDocumentAccess(deps, actor, documentId, "documents.upload_version");
+  const { document } = access;
 
   if (document.status !== "active") {
     throw new DocumentError(409, "document_in_trash", "Restore this document from trash before adding a version.");
@@ -436,7 +498,7 @@ export async function addVersion(
   // The current version (hence filename, and pending OCR text) changed — re-index.
   await refreshDocumentSearchVector(prisma, document.id);
 
-  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id));
+  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id), viewFor(access));
 }
 
 // ─────────────────────────── restore a version ───────────────────────────
@@ -454,7 +516,8 @@ export async function restoreVersion(
   versionId: string,
 ) {
   const { prisma } = deps;
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.upload_version");
+  const access = await loadDocumentAccess(deps, actor, documentId, "documents.upload_version");
+  const { document } = access;
 
   if (document.status !== "active") {
     throw new DocumentError(409, "document_in_trash", "Restore this document from trash first.");
@@ -503,7 +566,7 @@ export async function restoreVersion(
 
   await refreshDocumentSearchVector(prisma, document.id);
 
-  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id));
+  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id), viewFor(access));
 }
 
 // ─────────────────────────── edit metadata ───────────────────────────
@@ -519,7 +582,8 @@ export async function editMetadata(
   fieldValues: SubmittedFieldValue[],
 ) {
   const { prisma } = deps;
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.edit_metadata");
+  const access = await loadDocumentAccess(deps, actor, documentId, "documents.edit_metadata");
+  const { document } = access;
 
   const fields = await prisma.fieldDef.findMany({ where: { documentTypeId: document.documentTypeId } });
   const { rows, titleValue } = validateFieldValues(fields as FieldDefRow[], fieldValues);
@@ -546,7 +610,7 @@ export async function editMetadata(
   // Field values (and the derived title) changed — re-index so search reflects the edit.
   await refreshDocumentSearchVector(prisma, document.id);
 
-  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id));
+  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id), viewFor(access));
 }
 
 // ─────────────────────────── read ───────────────────────────
@@ -556,8 +620,9 @@ export async function editMetadata(
  *  Opening the viewer records a `view` event. */
 export async function getDocument(deps: Deps, actor: PermissionActor, documentId: string) {
   const { prisma } = deps;
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.view");
-  const resolved = await resolveDocumentPermissions(deps, actor, document);
+  const access = await loadDocumentAccess(deps, actor, documentId, "documents.view");
+  const { document } = access;
+  const view = viewFor(access);
 
   await logAuditEvent(prisma, {
     organizationId: actor.organizationId,
@@ -566,14 +631,37 @@ export async function getDocument(deps: Deps, actor: PermissionActor, documentId
     documentId: document.id,
     departmentId: document.departmentId,
     targetDescription: `Viewed: ${document.documentRef}`,
-    isConfidential: resolved.isConfidential,
+    isConfidential: access.isConfidential,
   });
 
   return {
-    ...shapeDocument(document),
-    permissions: resolved.map,
-    activity: await loadActivity(deps, actor.organizationId, document.id),
+    ...shapeDocument(document, view),
+    permissions: access.map,
+    legalHold: await documentHoldState(deps, actor, document, access.viaShare),
+    // The activity feed names who viewed / downloaded / edited — it travels with version history,
+    // never to a caller (or a share recipient) without it (H-2).
+    activity: view.history ? await loadActivity(deps, actor.organizationId, document.id) : [],
   };
+}
+
+/**
+ * The Legal Hold state the viewer renders (RET-5): whether the document is held, by which holds (its
+ * own, or inherited from a folder), and whether this caller may place/remove one here. A reason can
+ * name a legal matter, so the hold details go only to someone who may manage holds here; everyone
+ * else sees that the document is held and nothing more. A share recipient learns nothing about
+ * holds — hold management belongs to the home department.
+ */
+async function documentHoldState(
+  deps: Deps,
+  actor: PermissionActor,
+  document: { id: string; departmentId: string; folderId: string },
+  viaShare: boolean,
+) {
+  if (viaShare) return { held: false, holds: [], canManage: false };
+  const holds = await activeHoldsCovering(deps.prisma, actor.organizationId, document);
+  const canManage =
+    (await legalHoldAuthority(deps.prisma, actor, document.departmentId, document.folderId)) === "allowed";
+  return { held: holds.length > 0, holds: canManage ? holds : [], canManage };
 }
 
 interface ActivityEntry {
@@ -594,17 +682,18 @@ async function loadActivity(deps: Deps, organizationId: string, documentId: stri
   return events.map((e) => ({
     id: e.id,
     action: e.action,
-    actorName: e.actor.fullName,
+    actorName: auditActorName(e),
     description: e.targetDescription,
     occurredAt: e.occurredAt,
   }));
 }
 
 /** The per-document activity feed, on its own so the viewer can refresh it after an action without
- *  re-logging a view. Requires `documents.view` (which, for a confidential folder, means membership
- *  — so the feed stays member-only, VUE-4). */
+ *  re-logging a view. Requires `documents.version_history` — the same permission that shows the feed
+ *  in the viewer — so a view-only share recipient or a minimal role never reads who opened what
+ *  (H-2). For a confidential folder that also means membership, so the feed stays member-only (VUE-4). */
 export async function getDocumentActivity(deps: Deps, actor: PermissionActor, documentId: string) {
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.view");
+  const document = await loadDocumentForActor(deps, actor, documentId, "documents.version_history");
   return loadActivity(deps, actor.organizationId, document.id);
 }
 
@@ -622,11 +711,17 @@ export async function getDocumentFile(
   mode: "preview" | "download",
 ): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
   const actionKey: PermissionKey = mode === "download" ? "documents.download" : "documents.preview";
-  const document = await loadDocumentForActor(deps, actor, documentId, actionKey);
+  const access = await loadDocumentAccess(deps, actor, documentId, actionKey);
+  const { document } = access;
 
-  const version = versionId
-    ? document.versions.find((v) => v.id === versionId)
-    : document.versions.find((v) => v.id === document.currentVersionId);
+  // An older version is part of the version history: without `documents.version_history` only the
+  // current version is served, and an older one reads exactly like an unknown version (H-2).
+  const requested = versionId ?? document.currentVersionId;
+  const mayReachOlder = access.map["documents.version_history"] === true;
+  const version =
+    requested === document.currentVersionId || mayReachOlder
+      ? document.versions.find((v) => v.id === requested)
+      : undefined;
   if (!version) {
     throw new DocumentError(404, "version_not_found", "That version doesn't belong to this document.");
   }
@@ -674,13 +769,20 @@ export async function lookupByRef(deps: Deps, actor: PermissionActor, documentRe
  * at the route (`documents.view`, folder-scoped), which also handles the confidential boundary —
  * a folder the actor can't see never reaches this call.
  */
-export async function listFolderDocuments(deps: Deps, actor: PermissionActor, folderId: string) {
+export async function listFolderDocuments(
+  deps: Deps,
+  actor: PermissionActor,
+  folderId: string,
+  departmentId?: string,
+) {
   const { prisma } = deps;
   const folder = await prisma.folder.findFirst({
-    where: { id: folderId, organizationId: actor.organizationId },
-    select: { id: true },
+    // Bound to the department the route's permission gate resolved (SECURITY_AUDIT.md H-1).
+    where: { id: folderId, organizationId: actor.organizationId, ...(departmentId ? { departmentId } : {}) },
+    select: { id: true, departmentId: true },
   });
   if (!folder) throw new DocumentError(404, "folder_not_found", "Folder not found.");
+  const holds = await loadHoldIndex(prisma, actor.organizationId, folder.departmentId);
 
   const documents = await prisma.document.findMany({
     where: { organizationId: actor.organizationId, folderId, status: "active" },
@@ -699,7 +801,9 @@ export async function listFolderDocuments(deps: Deps, actor: PermissionActor, fo
     fileName: d.currentVersion?.fileName ?? null,
     fileSize: d.currentVersion?.fileSize ?? null,
     mimeType: d.currentVersion?.mimeType ?? null,
+    uploadedAt: d.uploadedAt,
     updatedAt: d.updatedAt,
+    legalHold: holds.isHeld(d),
   }));
 }
 
@@ -813,19 +917,9 @@ export async function listNeedsDetails(
 
 // ─────────────────────────── trash & recovery (Module 11) ───────────────────────────
 
-/** The retention window before an item in trash is eligible for auto-removal (TRSH-2, default 30d).
- *  R1 has no automated sweep — the countdown is informational; a purge is always a deliberate act. */
+/** The trash window before an item is permanently removed by the daily automatic trash purge
+ *  (TRSH-2, default 30 days). Items under a Legal Hold are never removed, however long they wait. */
 export const TRASH_RETENTION_DAYS = 30;
-
-/**
- * Retention-lock guard (TRSH-4). The *source* of a lock — retention rules per document type — is
- * Release 2, so nothing sets a lock in R1 and this always returns false. It exists so the
- * enforcement path (purge/restore refuse a locked item) is in place now and doesn't need retrofitting
- * when R2 supplies the lock: give this a real body and every call site already honours it.
- */
-function isRetentionLocked(_document: { id: string }): boolean {
-  return false;
-}
 
 /** Confirms the actor is a Department Admin of a department (both member-management and rules
  *  capability) — the authority required to permanently purge (TRSH-3). */
@@ -839,6 +933,58 @@ async function requireDepartmentAdmin(deps: Deps, actor: PermissionActor, depart
   }
 }
 
+const LEGAL_HOLD_DELETE_MESSAGE = "This document is under a Legal Hold and can't be deleted.";
+const LEGAL_HOLD_PURGE_MESSAGE = "This document is under a Legal Hold and can't be permanently deleted.";
+
+export interface TrashMove {
+  /** A user id, or `SYSTEM_ACTOR` for the daily auto-delete job. */
+  actorUserId: string;
+  source: TrashSource;
+  reason: string | null;
+  auditAction: AuditAction;
+  auditDescription: string;
+}
+
+/**
+ * The one soft-delete path (TRSH-1): used by a person's delete and by the daily auto-delete job
+ * (RET-3), so both refuse a held document in the same place and leave the same trail.
+ *
+ * The move is conditional on the document still being active, so it can never be applied twice — a
+ * second run of the job, or a person deleting at the same moment, simply finds nothing to move.
+ * Returns whether *this* call moved it; only then is an audit record written. Versions belong to the
+ * document row, so all of them move with it.
+ */
+export async function moveDocumentToTrash(
+  prisma: PrismaClient,
+  document: { id: string; organizationId: string; departmentId: string; folderId: string },
+  move: TrashMove,
+): Promise<boolean> {
+  if (await isUnderLegalHold(prisma, document.organizationId, document)) {
+    throw new DocumentError(409, "legal_hold", LEGAL_HOLD_DELETE_MESSAGE);
+  }
+  const { count } = await prisma.document.updateMany({
+    where: { id: document.id, organizationId: document.organizationId, status: "active" },
+    data: {
+      status: "in_trash",
+      deletedAt: new Date(),
+      deletedByUserId: move.actorUserId === SYSTEM_ACTOR ? null : move.actorUserId,
+      trashSource: move.source,
+      trashReason: move.reason,
+    },
+  });
+  if (count === 0) return false;
+
+  await logAuditEvent(prisma, {
+    organizationId: document.organizationId,
+    actorUserId: move.actorUserId,
+    action: move.auditAction,
+    documentId: document.id,
+    departmentId: document.departmentId,
+    targetDescription: move.auditDescription,
+  });
+  return true;
+}
+
 /** Soft-delete: move a document to trash (TRSH-1). Recoverable — never immediate destruction. */
 export async function deleteDocument(deps: Deps, actor: PermissionActor, documentId: string) {
   const { prisma } = deps;
@@ -847,18 +993,14 @@ export async function deleteDocument(deps: Deps, actor: PermissionActor, documen
     throw new DocumentError(409, "already_in_trash", "This document is already in the trash.");
   }
 
-  await prisma.document.update({
-    where: { id: document.id },
-    data: { status: "in_trash", deletedAt: new Date(), deletedByUserId: actor.userId },
-  });
-  await logAuditEvent(prisma, {
-    organizationId: actor.organizationId,
+  const moved = await moveDocumentToTrash(prisma, document, {
     actorUserId: actor.userId,
-    action: "delete",
-    documentId: document.id,
-    departmentId: document.departmentId,
-    targetDescription: `Moved to trash: ${document.documentRef}`,
+    source: "user",
+    reason: null,
+    auditAction: "delete",
+    auditDescription: `Moved to trash: ${document.documentRef}`,
   });
+  if (!moved) throw new DocumentError(409, "already_in_trash", "This document is already in the trash.");
   return { id: document.id, status: "in_trash" as const };
 }
 
@@ -872,15 +1014,23 @@ export interface TrashItem {
   fileName: string | null;
   mimeType: string | null;
   deletedAt: Date | null;
+  /** The person who deleted it, or "System" when auto-delete moved it. */
   deletedByName: string | null;
+  trashSource: TrashSource | null;
+  trashReason: string | null;
   daysUntilAutoRemove: number;
-  retentionLocked: boolean;
+  /** Under a Legal Hold: it stays in trash but is never purged (RET-6 / TRSH-4). */
+  legalHold: boolean;
+  /** Whether this caller may restore it — an auto-deleted document needs a Department Admin. */
+  canRestore: boolean;
+  /** Whether this caller may place a Legal Hold on it from the trash view. */
+  canManageHold: boolean;
 }
 
 /**
  * The department's trash (TRSH-2): items in trash the actor may see, each with who deleted it, its
- * origin folder, and an auto-remove countdown. Confidential folders the actor isn't named on are
- * excluded at the query layer. Gated at the route by `documents.restore`.
+ * origin folder, the reason, its Legal Hold state and an auto-remove countdown. Confidential folders
+ * the actor isn't named on are excluded at the query layer. Gated at the route by `documents.restore`.
  */
 export async function listTrash(deps: Deps, actor: PermissionActor, departmentId: string): Promise<TrashItem[]> {
   const { prisma } = deps;
@@ -907,10 +1057,18 @@ export async function listTrash(deps: Deps, actor: PermissionActor, departmentId
       (u) => [u.id, u.fullName],
     ),
   );
+  const holds = await loadHoldIndex(prisma, actor.organizationId, departmentId);
+  // Hold authority is per folder (a confidential folder answers to its Owner), so resolve it once
+  // per distinct folder rather than per item.
+  const authorityByFolder = new Map<string, boolean>();
+  for (const folderId of new Set(documents.map((d) => d.folderId))) {
+    authorityByFolder.set(folderId, (await legalHoldAuthority(prisma, actor, departmentId, folderId)) === "allowed");
+  }
 
   const dayMs = 24 * 60 * 60 * 1000;
   return documents.map((d) => {
     const elapsedDays = d.deletedAt ? Math.floor((Date.now() - d.deletedAt.getTime()) / dayMs) : 0;
+    const canManageHold = authorityByFolder.get(d.folderId) === true;
     return {
       id: d.id,
       documentRef: d.documentRef,
@@ -921,44 +1079,161 @@ export async function listTrash(deps: Deps, actor: PermissionActor, departmentId
       fileName: d.currentVersion?.fileName ?? null,
       mimeType: d.currentVersion?.mimeType ?? null,
       deletedAt: d.deletedAt,
-      deletedByName: d.deletedByUserId ? (deleters.get(d.deletedByUserId) ?? null) : null,
+      deletedByName: d.deletedByUserId
+        ? (deleters.get(d.deletedByUserId) ?? null)
+        : d.trashSource === "auto_delete"
+          ? "System"
+          : null,
+      trashSource: d.trashSource,
+      trashReason: d.trashReason,
       daysUntilAutoRemove: Math.max(0, TRASH_RETENTION_DAYS - elapsedDays),
-      retentionLocked: isRetentionLocked(d),
+      legalHold: holds.isHeld(d),
+      canRestore: d.trashSource !== "auto_delete" || canManageHold,
+      canManageHold,
     };
   });
 }
 
-/** Restore a trashed document to its origin folder (TRSH-2), ID/metadata/version history intact. */
+/**
+ * Restore a trashed document to its origin folder (TRSH-2), ID/metadata/version history intact.
+ *
+ * An **auto-deleted** document (RET-5) may be restored only by a Department Admin — or, inside a
+ * confidential folder, by its Owner — and restoring it places a Legal Hold ("Restored after
+ * auto-delete") in the same step, so the next daily run doesn't simply delete it again. A held
+ * document can be restored: a hold prevents destruction, not recovery.
+ */
 export async function restoreDocument(deps: Deps, actor: PermissionActor, documentId: string) {
   const { prisma } = deps;
-  const document = await loadDocumentForActor(deps, actor, documentId, "documents.restore");
+  const access = await loadDocumentAccess(deps, actor, documentId, "documents.restore");
+  const { document } = access;
   if (document.status !== "in_trash") {
     throw new DocumentError(409, "not_in_trash", "This document isn't in the trash.");
   }
-  if (isRetentionLocked(document)) {
-    throw new DocumentError(409, "retention_locked", "This document is under a retention lock and can't be changed.");
+
+  const wasAutoDeleted = document.trashSource === "auto_delete";
+  if (wasAutoDeleted) {
+    const authority = await legalHoldAuthority(prisma, actor, document.departmentId, document.folderId);
+    if (authority !== "allowed") {
+      throw new DocumentError(
+        403,
+        "forbidden",
+        "Only a Department Admin can restore a document that was auto-deleted.",
+      );
+    }
   }
 
-  await prisma.document.update({
-    where: { id: document.id },
-    data: { status: "active", deletedAt: null, deletedByUserId: null },
+  const placedHold = await prisma.$transaction(async (tx) => {
+    await tx.document.update({
+      where: { id: document.id },
+      data: { status: "active", deletedAt: null, deletedByUserId: null, trashSource: null, trashReason: null },
+    });
+    if (!wasAutoDeleted) return false;
+    // At most one active hold per document (a partial unique index); one already in place is kept.
+    const existing = await tx.legalHold.findFirst({
+      where: { organizationId: actor.organizationId, documentId: document.id, removedAt: null },
+      select: { id: true },
+    });
+    if (existing) return false;
+    await tx.legalHold.create({
+      data: {
+        organizationId: actor.organizationId,
+        departmentId: document.departmentId,
+        documentId: document.id,
+        reason: RESTORED_AFTER_AUTO_DELETE_REASON,
+        placedByUserId: actor.userId,
+      },
+    });
+    return true;
   });
+
   await logAuditEvent(prisma, {
     organizationId: actor.organizationId,
     actorUserId: actor.userId,
     action: "restore",
     documentId: document.id,
     departmentId: document.departmentId,
-    targetDescription: `Restored from trash: ${document.documentRef}`,
+    targetDescription: wasAutoDeleted
+      ? `Restored after auto-delete: ${document.documentRef}`
+      : `Restored from trash: ${document.documentRef}`,
   });
-  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id));
+  if (placedHold) {
+    await logAuditEvent(prisma, {
+      organizationId: actor.organizationId,
+      actorUserId: actor.userId,
+      action: "legal_hold_placed",
+      documentId: document.id,
+      departmentId: document.departmentId,
+      targetDescription: `Legal Hold placed on ${document.documentRef} — reason: ${RESTORED_AFTER_AUTO_DELETE_REASON}`,
+    });
+  }
+  return shapeDocument(await loadRawDocument(deps, actor.organizationId, document.id), viewFor(access));
 }
 
 /**
- * Permanently delete a trashed document (TRSH-3) — the only place data truly disappears. Department
- * Admin only, blocked by a retention lock (TRSH-4). Deletes the version files through the storage
- * abstraction and the version / field-value / share / document rows; the append-only audit trail
- * survives because `audit_event.document_id` is `ON DELETE SET NULL`.
+ * The one destruction path — a Department Admin's purge (TRSH-3) and the daily automatic trash purge
+ * both end here, so both refuse a held document in the same place (RET-6). Deletes the version files
+ * through the storage abstraction and the version / field-value / share / released-hold / document
+ * rows; the append-only audit trail survives because `audit_event.document_id` is `ON DELETE SET NULL`.
+ */
+export async function destroyTrashedDocument(
+  deps: { prisma: PrismaClient; env: Env },
+  document: { id: string; organizationId: string; departmentId: string; folderId: string; documentRef: string },
+  by: { actorUserId: string; auditAction: AuditAction; auditDescription: string },
+) {
+  const { prisma } = deps;
+  if (await isUnderLegalHold(prisma, document.organizationId, document)) {
+    throw new DocumentError(409, "legal_hold", LEGAL_HOLD_PURGE_MESSAGE);
+  }
+  const versions = await prisma.version.findMany({
+    where: { documentId: document.id, organizationId: document.organizationId },
+    select: { storageRef: true, fileSize: true },
+  });
+
+  // Log while the document row (and its FK) still exists; the SET-NULL cascade nulls the reference
+  // as the row is deleted, leaving the event's action/actor/ref intact.
+  await logAuditEvent(prisma, {
+    organizationId: document.organizationId,
+    actorUserId: by.actorUserId,
+    action: by.auditAction,
+    documentId: document.id,
+    departmentId: document.departmentId,
+    targetDescription: by.auditDescription,
+  });
+
+  // Delete the stored files first. A restore path reuses a version's storage_ref (never a fresh
+  // copy), so distinct refs are the unit to delete; failures are swallowed so a missing object can't
+  // strand a purge, but usage is only reverted for what we attempted.
+  const driver = await getActiveStorageDriver(deps, document.organizationId);
+  const seenRefs = new Set<string>();
+  let freedBytes = 0;
+  for (const v of versions) {
+    if (seenRefs.has(v.storageRef)) continue;
+    seenRefs.add(v.storageRef);
+    freedBytes += v.fileSize;
+    await driver.delete(v.storageRef).catch(() => {});
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.fieldValue.deleteMany({ where: { documentId: document.id } });
+    await tx.share.deleteMany({ where: { documentId: document.id } });
+    // Only released holds can remain here (an active one refused the purge above). Their history is
+    // kept in the audit trail (legal_hold_placed / legal_hold_removed).
+    await tx.legalHold.deleteMany({ where: { documentId: document.id, removedAt: { not: null } } });
+    await tx.document.update({ where: { id: document.id }, data: { currentVersionId: null } });
+    await tx.version.deleteMany({ where: { documentId: document.id } });
+    await tx.document.delete({ where: { id: document.id } });
+  });
+
+  if (freedBytes > 0) {
+    await prisma.storageConfig
+      .updateMany({ where: { organizationId: document.organizationId }, data: { usedBytes: { decrement: BigInt(freedBytes) } } })
+      .catch(() => {});
+  }
+}
+
+/**
+ * Permanently delete a trashed document (TRSH-3) — the only place a person can make data truly
+ * disappear. Department Admin only, blocked by a Legal Hold (TRSH-4 as amended by PRD v1.2).
  */
 export async function purgeDocument(
   deps: { prisma: PrismaClient; env: Env },
@@ -968,7 +1243,6 @@ export async function purgeDocument(
   const { prisma } = deps;
   const document = await prisma.document.findFirst({
     where: { id: documentId, organizationId: actor.organizationId },
-    include: { versions: { select: { storageRef: true, fileSize: true } } },
   });
   if (!document) throw new DocumentError(404, "document_not_found", "Document not found.");
 
@@ -991,52 +1265,16 @@ export async function purgeDocument(
     throw new DocumentError(409, "not_in_trash", "Only items in the trash can be permanently deleted.");
   }
   await requireDepartmentAdmin(deps, actor, document.departmentId);
-  if (isRetentionLocked(document)) {
-    throw new DocumentError(409, "retention_locked", "This document is under a retention lock and can't be purged.");
-  }
 
-  // Log while the document row (and its FK) still exists; the SET-NULL cascade nulls the reference
-  // as the row is deleted, leaving the event's action/actor/ref intact.
-  await logAuditEvent(prisma, {
-    organizationId: actor.organizationId,
+  await destroyTrashedDocument(deps, document, {
     actorUserId: actor.userId,
-    action: "delete",
-    documentId: document.id,
-    departmentId: document.departmentId,
-    targetDescription: `Permanently deleted: ${document.documentRef}`,
+    auditAction: "delete",
+    auditDescription: `Permanently deleted: ${document.documentRef}`,
   });
-
-  // Delete the stored files first. A restore path reuses a version's storage_ref (never a fresh
-  // copy), so distinct refs are the unit to delete; failures are swallowed so a missing object can't
-  // strand a purge, but usage is only reverted for what we attempted.
-  const driver = await getActiveStorageDriver(deps, actor.organizationId);
-  const seenRefs = new Set<string>();
-  let freedBytes = 0;
-  for (const v of document.versions) {
-    if (seenRefs.has(v.storageRef)) continue;
-    seenRefs.add(v.storageRef);
-    freedBytes += v.fileSize;
-    await driver.delete(v.storageRef).catch(() => {});
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.fieldValue.deleteMany({ where: { documentId: document.id } });
-    await tx.share.deleteMany({ where: { documentId: document.id } });
-    await tx.document.update({ where: { id: document.id }, data: { currentVersionId: null } });
-    await tx.version.deleteMany({ where: { documentId: document.id } });
-    await tx.document.delete({ where: { id: document.id } });
-  });
-
-  if (freedBytes > 0) {
-    await prisma.storageConfig
-      .updateMany({ where: { organizationId: actor.organizationId }, data: { usedBytes: { decrement: BigInt(freedBytes) } } })
-      .catch(() => {});
-  }
-
   return { id: documentId, purged: true };
 }
 
-/** Empty the department's trash (TRSH-3): purge every item except those under a retention lock. */
+/** Empty the department's trash (TRSH-3): purge every item except those under a Legal Hold. */
 export async function emptyTrash(
   deps: { prisma: PrismaClient; env: Env },
   actor: PermissionActor,
@@ -1067,8 +1305,8 @@ export async function emptyTrash(
       await purgeDocument(deps, actor, doc.id);
       purged++;
     } catch (err) {
-      // A retention-locked item is skipped, not fatal (TRSH-4); anything else is re-thrown.
-      if (err instanceof DocumentError && err.code === "retention_locked") skipped++;
+      // A held item is skipped, not fatal (RET-6 / TRSH-4); anything else is re-thrown.
+      if (err instanceof DocumentError && err.code === "legal_hold") skipped++;
       else throw err;
     }
   }

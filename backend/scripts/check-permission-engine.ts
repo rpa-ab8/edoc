@@ -13,6 +13,7 @@
  * than rewriting them.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -218,7 +219,7 @@ await prisma.folderPermission.deleteMany({ where: { folderId: { in: [child.id, g
 await prisma.folder.deleteMany({ where: { id: { in: [underConfidential.id, confidential.id, grandchild.id, child.id, root.id] } } });
 await prisma.membership.deleteMany({ where: { departmentId: dept.id } });
 await prisma.role.deleteMany({ where: { departmentId: dept.id } });
-await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
 await prisma.department.delete({ where: { id: dept.id } });
 
 console.log(`\n${pass} passed, ${fail} failed`);

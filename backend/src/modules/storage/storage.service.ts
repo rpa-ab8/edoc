@@ -6,6 +6,7 @@ import { NasDriver } from "./drivers/nas.driver.js";
 import { R2Driver } from "./drivers/r2.driver.js";
 import type { StorageDriver } from "./drivers/types.js";
 import type { StorageConfigInput } from "./storage.schemas.js";
+import { assertStorageTargetAllowed, StorageTargetError } from "./storage.policy.js";
 
 export class StorageConfigError extends Error {
   constructor(
@@ -22,7 +23,18 @@ interface Deps {
   env: Env;
 }
 
-function buildDriver(input: StorageConfigInput): StorageDriver {
+/**
+ * The only way a driver is constructed. The target is checked against the storage policy first
+ * (allowed NAS root, Cloudflare R2 hosts only — SECURITY_AUDIT.md M-4), on save, on re-test and on
+ * every live use, so no path or endpoint outside policy is ever touched.
+ */
+async function buildDriver(env: Env, input: StorageConfigInput): Promise<StorageDriver> {
+  try {
+    await assertStorageTargetAllowed(env, input);
+  } catch (err) {
+    if (err instanceof StorageTargetError) throw new StorageConfigError(400, err.code, err.message);
+    throw err;
+  }
   if (input.backendType === "nas") {
     return new NasDriver({
       mountPath: input.mountPath,
@@ -57,7 +69,7 @@ export async function getActiveStorageDriver(deps: Deps, organizationId: string)
   if (!stored?.enc) {
     throw new StorageConfigError(500, "storage_credentials_unreadable", "The saved storage credentials could not be read. Reconnect the backend.");
   }
-  return buildDriver(decryptJson<StorageConfigInput>(env, stored.enc));
+  return buildDriver(env, decryptJson<StorageConfigInput>(env, stored.enc));
 }
 
 /** Adjusts the org's recorded storage usage. Positive on upload, negative if bytes are ever freed. */
@@ -108,7 +120,7 @@ export async function retestStorageConfig(deps: Deps, organizationId: string, ac
   }
 
   const input = decryptJson<StorageConfigInput>(env, stored.enc);
-  const result = await buildDriver(input).testConnection();
+  const result = await (await buildDriver(env, input)).testConnection();
 
   await prisma.storageConfig.update({
     where: { organizationId },
@@ -144,7 +156,7 @@ export async function testAndSaveStorageConfig(
   input: StorageConfigInput,
 ) {
   const { prisma, env } = deps;
-  const driver = buildDriver(input);
+  const driver = await buildDriver(env, input);
   const result = await driver.testConnection();
 
   if (!result.success) {

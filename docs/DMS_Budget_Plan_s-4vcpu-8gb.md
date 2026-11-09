@@ -1,4 +1,4 @@
-# DMS — Production Budget Plan (DigitalOcean `s-4vcpu-8gb`)
+# Edoc — Production Budget Plan (DigitalOcean `s-4vcpu-8gb`)
 
 **Prepared:** 2026-10-17 · **Load:** 1 organization, up to 250 users, ~50 concurrent, files < 100 MB (limit 120 MB)
 

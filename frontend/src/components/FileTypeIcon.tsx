@@ -10,7 +10,7 @@ type IconComponent = typeof DocumentIcon;
 /**
  * Maps a file's MIME type (or, as a fallback, its extension) to a distinct icon + colour, so a
  * documents list is scannable by type at a glance: PDFs read red, images teal, spreadsheets green,
- * Word documents indigo, anything else a neutral document. Colours use the categorical tints, which
+ * Word documents indigo, Markdown orange, anything else (plain text included) a neutral document. Colours use the categorical tints, which
  * carry no state meaning (Tailwind config note).
  */
 function resolve(mimeType?: string | null, fileName?: string | null): { Icon: IconComponent; tint: string } {
@@ -29,6 +29,9 @@ function resolve(mimeType?: string | null, fileName?: string | null): { Icon: Ic
   }
   if (mime.includes("wordprocessingml") || mime.includes("msword") || ["docx", "doc"].includes(ext)) {
     return { Icon: DocumentIcon, tint: "bg-cat-indigo-tint text-cat-indigo" };
+  }
+  if (mime === "text/markdown" || ["md", "markdown"].includes(ext)) {
+    return { Icon: DocumentIcon, tint: "bg-cat-orange-tint text-cat-orange" };
   }
   return { Icon: DocumentIcon, tint: "bg-surface-muted text-subtle" };
 }

@@ -1,4 +1,4 @@
-# DMS — Production Runbook
+# Edoc — Production Runbook
 
 > **Deploying for the first time?** Follow the step-by-step guide in `docs/DMS_Deployment_Guide.md`. This runbook is the day-to-day operations reference.
 
@@ -8,6 +8,7 @@ One server, everything in Docker Compose (Tech Stack §3.9). Sizing and cost: `d
 Internet ──▶ web (Caddy: HTTPS, security headers, SPA, /api proxy)
                 └─▶ api (Fastify) ──▶ postgres, redis, storage (R2 or NAS)
                     worker (OCR) ───▶ postgres, redis, storage
+                    retention-worker (daily 02:00 IST: auto-delete → Trash, then Trash purge) ───▶ postgres, redis, storage
                     migrate (one-shot: prisma migrate deploy, runs before api/worker)
                     backup (cron: pg_dump → ./backups, optional copy to R2)
 ```
@@ -95,9 +96,10 @@ Change every development or test password, and never reuse one from development.
 ## 5. NAS storage instead of R2
 
 1. Mount the share on the host, for example at `/mnt/dms-nas`, using `/etc/fstab` with credentials in a root-only file.
-2. In `docker-compose.prod.yml`, uncomment the `volumes:` block under `x-backend`. It mounts the share at the **same path** in both `api` and `worker`.
+2. In `docker-compose.prod.yml`, uncomment the `volumes:` block under `x-backend`. It mounts the share at the **same path** in `api`, `worker` and `retention-worker` (the retention run deletes purged files from storage).
 3. The containers run as uid **1000** (`node`), so the share must be writable by uid 1000. With CIFS, add `uid=1000,gid=1000` to the mount options.
-4. In Onboarding → Storage, choose NAS and enter `/mnt/dms-nas`. The connection test writes, reads back and deletes a probe file as uid 1000.
+4. Set `STORAGE_NAS_ROOT=/mnt/dms-nas` in `.env.production` and restart (`dc up -d`). In production NAS storage is refused until this is set, and any mount path outside it is refused (SECURITY_AUDIT.md M-4).
+5. In Onboarding → Storage, choose NAS and enter `/mnt/dms-nas` (or a folder inside it). The connection test writes, reads back and deletes a probe file as uid 1000.
 
 The NAS needs its own backup. The database dumps don't include document files.
 
@@ -127,9 +129,9 @@ Downtime is the few seconds while `api` restarts. Tag every release you deploy (
 ### Restore from backup
 
 ```sh
-dc stop api worker
+dc stop api worker retention-worker
 dc run --rm backup restore.sh /backups/dms-YYYYMMDD-HHMMSS.dump   # replaces current contents
-dc start api worker
+dc start api worker retention-worker
 ```
 
 Rehearse this on a scratch server every quarter. A backup you haven't restored is a hope, not a backup.
@@ -148,7 +150,8 @@ Keep `.env.production` at mode `600` and out of git (it is in `.gitignore`). Sto
 
 ## 9. Monitoring and logs
 
-- **Status:** `dc ps`, `dc logs -f api`, `dc logs -f worker`. Logs are JSON, rotated at 10 MB × 5 per container.
+- **Status:** `dc ps`, `dc logs -f api`, `dc logs -f worker`, `dc logs retention-worker`. Logs are JSON, rotated at 10 MB × 5 per container.
+- **Retention run:** each day `retention-worker` logs one `[retention] run finished …` line with how many documents went to Trash, how many were skipped for a Legal Hold, how many were permanently removed from Trash, and any failures (each failure is also logged with its document ID). Time: `RETENTION_JOB_TIME` / `RETENTION_JOB_TIME_ZONE` in `.env.production`. To run it by hand: `dc run --rm retention-worker node dist/worker/retention.worker.js --once` — safe to repeat, a second run the same day changes nothing.
 - **Uptime:** `dc --profile monitoring up -d uptime-kuma`, then open it through a tunnel (`ssh -L 3001:127.0.0.1:3001 user@server` → <http://localhost:3001>). Monitor `https://<domain>/api/health` and point alerts at email. Self-hosted monitoring can't report its own server being down, so also add a free external check (for example UptimeRobot) on the same URL.
 - **Not wired yet:** Sentry error tracking (Tech Stack §3.10). Errors currently go to `dc logs api` only.
 
@@ -163,6 +166,7 @@ Keep `.env.production` at mode `600` and out of git (it is in `.gitignore`). Sto
 | Everyone gets "Too many attempts" | `TRUSTED_PROXIES` isn't set while behind the Cloudflare proxy (§2). |
 | Documents stuck at OCR "pending" | `worker` is down (`dc logs worker`). The first image OCR also downloads Tesseract language data, so the server needs outbound HTTPS. |
 | Storage test fails on NAS | The mount isn't writable by uid 1000, or isn't mounted in both `api` and `worker` (§5). |
+| Auto-deleted documents never reach Trash, or Trash never empties itself | `retention-worker` is down (`dc logs retention-worker`), or the department's auto-delete period is off. A document under a Legal Hold is never deleted — by design. |
 
 ## 11. Post-deploy smoke test (5 minutes)
 

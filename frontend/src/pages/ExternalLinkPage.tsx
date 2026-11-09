@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { primaryButtonBase } from "../components/AuthCard";
 import { DownloadIcon, LockIcon } from "../components/icons";
+import { LazyMarkdownView } from "../components/LazyMarkdownView";
+import { isPreviewable } from "../lib/documents";
 import {
   downloadExternalLinkFile,
   ExternalLinkError,
@@ -23,7 +25,7 @@ const ERROR_COPY: Record<string, string> = {
 export function ExternalLinkPage() {
   const { token = "" } = useParams();
   const [doc, setDoc] = useState<ExternalLinkDocument | null>(null);
-  const [preview, setPreview] = useState<{ url: string; mimeType: string } | null>(null);
+  const [preview, setPreview] = useState<{ url: string; mimeType: string; text: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -56,7 +58,7 @@ export function ExternalLinkPage() {
     };
   }, [token]);
 
-  const previewKind = preview?.mimeType === "application/pdf" ? "pdf" : preview?.mimeType.startsWith("image/") ? "image" : null;
+  const previewKind = isPreviewable(preview?.mimeType);
 
   return (
     <div className="flex min-h-screen flex-col bg-canvas">
@@ -97,7 +99,15 @@ export function ExternalLinkPage() {
               <span className="plate px-2.5 py-1 text-[13px]">{doc.documentRef}</span>
               <span className="text-[16px] font-semibold text-ink">{doc.title ?? "Untitled"}</span>
             </div>
-            {previewKind === "image" && preview ? (
+            {(previewKind === "markdown" || previewKind === "text") && preview ? (
+              <div className="max-h-[80vh] overflow-auto rounded-xl border border-line bg-surface px-8 py-7 shadow-card">
+                {previewKind === "markdown" ? (
+                  <LazyMarkdownView source={preview.text ?? ""} />
+                ) : (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[13.5px] leading-relaxed text-ink">{preview.text}</pre>
+                )}
+              </div>
+            ) : previewKind === "image" && preview ? (
               <img src={preview.url} alt={doc.title ?? "Document"} className="mx-auto max-h-[78vh] rounded-xl border border-line bg-surface shadow-card" />
             ) : previewKind === "pdf" && preview ? (
               // A view-only link hides the browser PDF viewer's own toolbar, which would otherwise

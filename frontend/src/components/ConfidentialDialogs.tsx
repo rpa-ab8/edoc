@@ -70,6 +70,8 @@ export function ConfidentialManageDialog({ folderId, onClose }: { folderId: stri
 
   const memberIds = new Set((data?.members ?? []).map((m) => m.userId));
   const addable = users.filter((u) => !memberIds.has(u.id));
+  // Only the owner manages the list; everyone else on it sees who has access, read-only.
+  const canManage = data?.canManage === true;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["confidential-members", folderId] });
 
@@ -88,6 +90,7 @@ export function ConfidentialManageDialog({ folderId, onClose }: { folderId: stri
     <Modal title="Confidential access" subtitle={data?.folderName} onClose={onClose}>
       <p className="mb-4 text-[13px] text-subtle">
         Access is this named list only — roles grant nothing here, and the owner can't be removed.
+        {data && !canManage && " Only the owner can add or remove people."}
       </p>
 
       {isLoading ? (
@@ -102,7 +105,7 @@ export function ConfidentialManageDialog({ folderId, onClose }: { folderId: stri
               </div>
               {m.isOwner ? (
                 <StatusPill tone="primary">Owner</StatusPill>
-              ) : (
+              ) : canManage && (
                 <button
                   type="button"
                   disabled={remove.isPending}
@@ -117,17 +120,19 @@ export function ConfidentialManageDialog({ folderId, onClose }: { folderId: stri
         </ul>
       )}
 
-      <div className="mt-4 border-t border-line-muted pt-4">
-        <label className="mb-1.5 block text-[12.5px] font-medium text-ink">Add someone</label>
-        <Select
-          value=""
-          onChange={(id) => id && add.mutate(id)}
-          disabled={add.isPending}
-          placeholder={addable.length ? "Choose a person…" : "Everyone's already added"}
-          ariaLabel="Add a member"
-          options={addable.map((u) => ({ value: u.id, label: u.fullName, hint: u.email }))}
-        />
-      </div>
+      {canManage && (
+        <div className="mt-4 border-t border-line-muted pt-4">
+          <label className="mb-1.5 block text-[12.5px] font-medium text-ink">Add someone</label>
+          <Select
+            value=""
+            onChange={(id) => id && add.mutate(id)}
+            disabled={add.isPending}
+            placeholder={addable.length ? "Choose a person…" : "Everyone's already added"}
+            ariaLabel="Add a member"
+            options={addable.map((u) => ({ value: u.id, label: u.fullName, hint: u.email }))}
+          />
+        </div>
+      )}
       {error && <p className="mt-3 text-[13px] text-danger">{error}</p>}
     </Modal>
   );

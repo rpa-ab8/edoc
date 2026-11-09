@@ -18,6 +18,7 @@
  * DEV ONLY. Point it at a development database.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -483,7 +484,7 @@ try {
   fail++;
 } finally {
   for (const O of [A, B]) {
-    await prisma.auditEvent.deleteMany({ where: { organizationId: O.org.id } });
+    await purgeTestAuditEvents(prisma, { where: { organizationId: O.org.id } });
     await prisma.confidentialRecovery.deleteMany({ where: { organizationId: O.org.id } });
     await prisma.confidentialMember.deleteMany({ where: { folder: { organizationId: O.org.id } } });
     await prisma.folderPermission.deleteMany({ where: { folder: { organizationId: O.org.id } } });

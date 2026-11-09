@@ -8,10 +8,12 @@ import type { PermissionActor } from "../../lib/effective-permissions.js";
 const AUDIT_ACTIONS = [
   "view", "upload", "download", "edit", "delete", "restore", "share", "link_access",
   "role_change", "member_change", "config_change", "permission_change", "workflow_transition",
+  "auto_delete", "purge", "legal_hold_placed", "legal_hold_removed", "retention_change",
 ] as const;
 
 const filtersSchema = z.object({
   actorUserId: z.string().uuid().optional(),
+  actorType: z.enum(["user", "system"]).optional(),
   action: z.enum(AUDIT_ACTIONS).optional(),
   documentQuery: z.string().trim().min(1).max(200).optional(),
   from: z.string().datetime().optional(),
@@ -38,6 +40,7 @@ function parseFilters(query: unknown): AuditFilters {
   const q = filtersSchema.parse(query ?? {});
   return {
     actorUserId: q.actorUserId,
+    actorType: q.actorType,
     action: q.action,
     documentQuery: q.documentQuery,
     from: q.from ? new Date(q.from) : undefined,

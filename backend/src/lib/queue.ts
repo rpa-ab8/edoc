@@ -14,6 +14,21 @@ export interface OcrJobData {
   versionId: string;
 }
 
+/**
+ * The daily retention run (PRD v1.2 RET-3) — one BullMQ job scheduler fires it at
+ * RETENTION_JOB_TIME in RETENTION_JOB_TIME_ZONE; the retention worker
+ * (`src/worker/retention.worker.ts`) consumes it. A fixed scheduler id means re-registering on every
+ * worker start updates the one schedule rather than adding another.
+ */
+export const RETENTION_QUEUE_NAME = "retention";
+export const RETENTION_SCHEDULER_ID = "daily-retention";
+
+/** "02:00" → the cron pattern "0 2 * * *". */
+export function dailyCronPattern(time: string): string {
+  const [hours, minutes] = time.split(":").map(Number);
+  return `${minutes} ${hours} * * *`;
+}
+
 // BullMQ requires `maxRetriesPerRequest: null` on its Redis connection (blocking commands).
 export function createQueueConnection(env: Env): Redis {
   return new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });

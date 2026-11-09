@@ -1,4 +1,4 @@
-// DMS — Prisma schema
+// Edoc — Prisma schema
 // Generated from docs/DMS_Data_Model.md — keep in sync with that document.
 // Sections below are numbered to match the data model doc for cross-reference.
 
@@ -14,44 +14,50 @@ datasource db {
 // ───────────────────────── 2. Core entities ─────────────────────────
 
 model Organization {
-  id                    String   @id @default(uuid())
-  name                  String
-  industry              String?
-  subfolderDepthLimit   Int      @default(5)
-  createdByUserId       String
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  name                String
+  industry            String?
+  subfolderDepthLimit Int      @default(5)
+  // IANA time zone the organization works in. Calendar dates are read in it: the Upload Date filter
+  // (SRCH-6) and the auto-delete job's "today" (RET-3). Data Model §2.1.
+  timeZone            String   @default("Asia/Kolkata")
+  createdByUserId     String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  memberships           Membership[]
-  departments           Department[]
-  storageConfig         StorageConfig?
-  auditEvents           AuditEvent[]
-  invitations           Invitation[]
+  memberships   Membership[]
+  departments   Department[]
+  storageConfig StorageConfig?
+  auditEvents   AuditEvent[]
+  invitations   Invitation[]
+  legalHolds    LegalHold[]
 
   @@map("organization")
 }
 
 // Global identity — the only entity not scoped to an organization.
 model User {
-  id                String    @id @default(uuid())
-  email             String    @unique
-  passwordHash      String
-  fullName          String
-  emailVerifiedAt   DateTime?
-  status            UserStatus @default(active)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id              String     @id @default(uuid())
+  email           String     @unique
+  passwordHash    String
+  fullName        String
+  emailVerifiedAt DateTime?
+  status          UserStatus @default(active)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
-  memberships       Membership[]
-  refreshTokens     RefreshToken[]
-  passwordResets    PasswordResetToken[]
-  emailVerifications EmailVerificationToken[]
-  uploadedVersions  Version[]        @relation("UploadedBy")
-  sharesCreated     Share[]          @relation("SharedBy")
-  auditEvents       AuditEvent[]     @relation("ActorUser")
+  memberships             Membership[]
+  refreshTokens           RefreshToken[]
+  passwordResets          PasswordResetToken[]
+  emailVerifications      EmailVerificationToken[]
+  uploadedVersions        Version[]                @relation("UploadedBy")
+  sharesCreated           Share[]                  @relation("SharedBy")
+  auditEvents             AuditEvent[]             @relation("ActorUser")
   confidentialMemberships ConfidentialMember[]
-  invitationsSent   Invitation[]     @relation("InvitedBy")
-  loginAttempts     LoginAttempt[]
+  invitationsSent         Invitation[]             @relation("InvitedBy")
+  loginAttempts           LoginAttempt[]
+  legalHoldsPlaced        LegalHold[]              @relation("LegalHoldPlacedBy")
+  legalHoldsRemoved       LegalHold[]              @relation("LegalHoldRemovedBy")
 
   @@map("user")
 }
@@ -63,20 +69,20 @@ enum UserStatus {
 
 // The join that defines access: user → department → role, exactly one role per department.
 model Membership {
-  id             String   @id @default(uuid())
+  id             String           @id @default(uuid())
   organizationId String
   userId         String
   departmentId   String
   roleId         String
   status         MembershipStatus @default(active)
   invitedEmail   String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  user           User         @relation(fields: [userId], references: [id])
-  department     Department   @relation(fields: [departmentId], references: [id])
-  role           Role         @relation(fields: [roleId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  role         Role         @relation(fields: [roleId], references: [id])
 
   @@unique([userId, departmentId]) // one role per department per user
   @@map("membership")
@@ -89,23 +95,27 @@ enum MembershipStatus {
 }
 
 model Department {
-  id                   String   @id @default(uuid())
-  organizationId       String
-  name                 String
-  idPrefix             String
-  subjectTerm          String?
-  identifierTerm       String?
-  subfolderDepthLimit  Int?     // null = inherit organization default
-  rules                Json?    // Step-5 automation rules — see Data Model §2.4
-  status               DepartmentStatus @default(active)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                  String           @id @default(uuid())
+  organizationId      String
+  name                String
+  idPrefix            String
+  subjectTerm         String?
+  identifierTerm      String?
+  subfolderDepthLimit Int? // null = inherit organization default
+  rules               Json? // Step-5 automation rules — see Data Model §2.4
+  // Auto-delete period in whole years (RET-1). null = off, the default; no template sets it.
+  // Counted from each document's `uploadedAt`, and applies to documents uploaded before it was set.
+  autoDeleteYears     Int?
+  status              DepartmentStatus @default(active)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
-  organization         Organization @relation(fields: [organizationId], references: [id])
-  memberships          Membership[]
-  roles                Role[]
-  documentTypes        DocumentType[]
-  folders              Folder[]
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  memberships   Membership[]
+  roles         Role[]
+  documentTypes DocumentType[]
+  folders       Folder[]
+  legalHolds    LegalHold[]
 
   @@map("department")
 }
@@ -122,12 +132,12 @@ model Role {
   departmentId   String
   name           String
   isSystem       Boolean  @default(false) // built-ins undeletable
-  permissions    Json     // permission-key -> bool map, see PRD §9
+  permissions    Json // permission-key -> bool map, see PRD §9
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  department     Department @relation(fields: [departmentId], references: [id])
-  memberships    Membership[]
+  department      Department         @relation(fields: [departmentId], references: [id])
+  memberships     Membership[]
   folderOverrides FolderPermission[]
 
   @@map("role")
@@ -136,23 +146,24 @@ model Role {
 // ───────────────────────── 4. Folders and documents ─────────────────────────
 
 model Folder {
-  id               String   @id @default(uuid())
-  organizationId   String
-  departmentId     String
-  parentFolderId   String?
-  name             String
-  isConfidential   Boolean  @default(false)
-  depth            Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id             String   @id @default(uuid())
+  organizationId String
+  departmentId   String
+  parentFolderId String?
+  name           String
+  isConfidential Boolean  @default(false)
+  depth          Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  department       Department @relation(fields: [departmentId], references: [id])
-  parent           Folder?    @relation("FolderTree", fields: [parentFolderId], references: [id])
-  children         Folder[]   @relation("FolderTree")
-  documents        Document[]
-  permissionOverrides FolderPermission[]
-  confidentialMembers ConfidentialMember[]
+  department             Department             @relation(fields: [departmentId], references: [id])
+  parent                 Folder?                @relation("FolderTree", fields: [parentFolderId], references: [id])
+  children               Folder[]               @relation("FolderTree")
+  documents              Document[]
+  permissionOverrides    FolderPermission[]
+  confidentialMembers    ConfidentialMember[]
   confidentialRecoveries ConfidentialRecovery[]
+  legalHolds             LegalHold[]
 
   @@map("folder")
 }
@@ -162,7 +173,7 @@ model FolderPermission {
   id          String @id @default(uuid())
   folderId    String
   roleId      String
-  permissions Json   // restricted subset only
+  permissions Json // restricted subset only
 
   folder Folder @relation(fields: [folderId], references: [id])
   role   Role   @relation(fields: [roleId], references: [id])
@@ -173,35 +184,43 @@ model FolderPermission {
 
 // Identity + metadata. The file itself lives in Version.
 model Document {
-  id                String   @id @default(uuid())
-  organizationId    String
-  departmentId      String
-  folderId          String
-  documentTypeId    String
-  documentRef       String   // e.g. "HR-CON-2026-00142" — immutable, unique per org
-  titleValue        String?  // derived from the type's title field
-  currentVersionId  String?  @unique
-  status            DocumentStatus @default(active)
-  workflowState     WorkflowState? // reserved for R2, unused in R1
-  deletedAt         DateTime?
-  deletedByUserId   String?        // who moved it to trash (TRSH-2), cleared on restore
+  id               String                   @id @default(uuid())
+  organizationId   String
+  departmentId     String
+  folderId         String
+  documentTypeId   String
+  documentRef      String // e.g. "HR-CON-2026-00142" — immutable, unique per org
+  titleValue       String? // derived from the type's title field
+  currentVersionId String?                  @unique
+  status           DocumentStatus           @default(active)
+  workflowState    WorkflowState? // reserved for R2, unused in R1
+  deletedAt        DateTime?
+  deletedByUserId  String? // who moved it to trash (TRSH-2), cleared on restore; null when the System did
+  trashSource      TrashSource? // how it reached the trash — user delete or auto-delete (RET-3); cleared on restore
+  trashReason      String? // shown in the trash view, e.g. "Auto-deleted - retention period ended"
+  // The date the document was first uploaded (RET-2) — the auto-delete clock. Set once on insert and
+  // shared by every version; a DB trigger refuses any later change, so a new version, a metadata
+  // edit, a move or a share can never restart the clock.
+  uploadedAt       DateTime                 @default(now())
   // Full-text search index (Module 7). Maintained by the app from document_ref, title, field
   // values, filename and OCR text — see Data Model §4.3. Unsupported by Prisma's query API, so it
   // is read/written only through raw SQL (`refreshDocumentSearchVector` / the search query).
-  searchVector      Unsupported("tsvector")?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  searchVector     Unsupported("tsvector")?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
 
-  folder            Folder       @relation(fields: [folderId], references: [id])
-  documentType      DocumentType @relation(fields: [documentTypeId], references: [id])
-  currentVersion    Version?     @relation("CurrentVersion", fields: [currentVersionId], references: [id])
-  versions          Version[]    @relation("DocumentVersions")
-  fieldValues       FieldValue[]
-  shares            Share[]
-  auditEvents       AuditEvent[]
+  folder         Folder       @relation(fields: [folderId], references: [id])
+  documentType   DocumentType @relation(fields: [documentTypeId], references: [id])
+  currentVersion Version?     @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  versions       Version[]    @relation("DocumentVersions")
+  fieldValues    FieldValue[]
+  shares         Share[]
+  auditEvents    AuditEvent[]
+  legalHolds     LegalHold[]
 
   @@unique([organizationId, documentRef])
   @@index([searchVector], type: Gin)
+  @@index([departmentId, status, uploadedAt]) // the daily auto-delete scan and the Upload Date filter
   @@map("document")
 }
 
@@ -210,7 +229,12 @@ enum DocumentStatus {
   in_trash
 }
 
-enum WorkflowState { // reserved — Release 2
+enum TrashSource {
+  user // a person deleted it (TRSH-1)
+  auto_delete // the daily auto-delete job moved it (RET-3) — restorable only by a Department Admin
+}
+
+enum WorkflowState {
   draft
   pending
   approved
@@ -223,31 +247,31 @@ model DocumentRefSequence {
   departmentId   String
   documentTypeId String
   year           Int
-  lastNumber     Int @default(0)
+  lastNumber     Int    @default(0)
 
   @@id([organizationId, departmentId, documentTypeId, year])
   @@map("document_ref_sequence")
 }
 
 model Version {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   organizationId   String
   documentId       String
   versionNumber    Int
-  storageRef       String   // opaque reference into the storage backend
+  storageRef       String // opaque reference into the storage backend
   fileName         String
   fileSize         Int
   mimeType         String
-  checksum         String?  // SHA-256 hex of the file bytes — backs duplicate-on-upload (Data Model §4.5)
+  checksum         String? // SHA-256 hex of the file bytes — backs duplicate-on-upload (Data Model §4.5)
   ocrStatus        OcrStatus @default(pending)
-  ocrText          String?  @db.Text
+  ocrText          String?   @db.Text
   changeNote       String?
   uploadedByUserId String
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
-  document         Document @relation("DocumentVersions", fields: [documentId], references: [id])
-  currentFor       Document? @relation("CurrentVersion")
-  uploadedBy       User     @relation("UploadedBy", fields: [uploadedByUserId], references: [id])
+  document   Document  @relation("DocumentVersions", fields: [documentId], references: [id])
+  currentFor Document? @relation("CurrentVersion")
+  uploadedBy User      @relation("UploadedBy", fields: [uploadedByUserId], references: [id])
 
   @@unique([documentId, versionNumber])
   @@index([organizationId, checksum]) // duplicate-on-upload lookup (UPL-4)
@@ -268,26 +292,26 @@ model DocumentType {
   name         String
   idCode       String // e.g. "CON" — the TYPE segment of the document ID
 
-  department   Department @relation(fields: [departmentId], references: [id])
-  fields       FieldDef[]
-  documents    Document[]
+  department Department @relation(fields: [departmentId], references: [id])
+  fields     FieldDef[]
+  documents  Document[]
 
   @@map("document_type")
 }
 
 model FieldDef {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   documentTypeId String
   label          String
   fieldType      FieldType
-  isRequired     Boolean  @default(false)
-  isFilterable   Boolean  @default(true)
-  isTitle        Boolean  @default(false) // exactly one per type
-  options        Json?    // for dropdown types
-  sortOrder      Int      @default(0)
+  isRequired     Boolean   @default(false)
+  isFilterable   Boolean   @default(true)
+  isTitle        Boolean   @default(false) // exactly one per type
+  options        Json? // for dropdown types
+  sortOrder      Int       @default(0)
 
-  documentType   DocumentType @relation(fields: [documentTypeId], references: [id])
-  values         FieldValue[]
+  documentType DocumentType @relation(fields: [documentTypeId], references: [id])
+  values       FieldValue[]
 
   @@map("field_def")
 }
@@ -317,25 +341,25 @@ model FieldValue {
 // ───────────────────────── 6. Sharing ─────────────────────────
 
 model Share {
-  id                   String   @id @default(uuid())
-  organizationId       String
-  documentId           String
-  sharedByUserId       String
-  targetType           ShareTargetType
-  targetUserId         String?
-  targetDepartmentId   String?
-  permission           SharePermission
-  linkToken            String?  @unique
-  expiresAt            DateTime?
-  status               ShareStatus @default(active)
-  openedCount          Int      @default(0)
+  id                 String          @id @default(uuid())
+  organizationId     String
+  documentId         String
+  sharedByUserId     String
+  targetType         ShareTargetType
+  targetUserId       String?
+  targetDepartmentId String?
+  permission         SharePermission
+  linkToken          String?         @unique
+  expiresAt          DateTime?
+  status             ShareStatus     @default(active)
+  openedCount        Int             @default(0)
   // When the recipient hid this from their own "Shared with me" — a per-recipient tidy that does
   // not revoke access or affect the sharer's "Shared by me" (Data Model §6.1).
-  dismissedAt          DateTime?
-  createdAt            DateTime @default(now())
+  dismissedAt        DateTime?
+  createdAt          DateTime        @default(now())
 
-  document             Document @relation(fields: [documentId], references: [id])
-  sharedBy              User     @relation("SharedBy", fields: [sharedByUserId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
+  sharedBy User     @relation("SharedBy", fields: [sharedByUserId], references: [id])
 
   @@map("share")
 }
@@ -376,16 +400,16 @@ model ConfidentialMember {
 // Dual-control recovery of an orphaned confidential folder (Data Model §7.2, CNF-4). Both a Super
 // Admin and a Department Admin must approve before access is restored.
 model ConfidentialRecovery {
-  id                          String   @id @default(uuid())
-  organizationId              String
-  folderId                    String
-  newMemberUserId             String
-  initiatedByUserId           String
-  superAdminApprovedByUserId  String?
-  deptAdminApprovedByUserId   String?
-  status                      ConfidentialRecoveryStatus @default(pending)
-  createdAt                   DateTime @default(now())
-  completedAt                 DateTime?
+  id                         String                     @id @default(uuid())
+  organizationId             String
+  folderId                   String
+  newMemberUserId            String
+  initiatedByUserId          String
+  superAdminApprovedByUserId String?
+  deptAdminApprovedByUserId  String?
+  status                     ConfidentialRecoveryStatus @default(pending)
+  createdAt                  DateTime                   @default(now())
+  completedAt                DateTime?
 
   folder Folder @relation(fields: [folderId], references: [id])
 
@@ -399,22 +423,62 @@ enum ConfidentialRecoveryStatus {
   cancelled
 }
 
+// ───────────────────────── 7A. Legal hold ─────────────────────────
+
+// A Legal Hold (RET-5/RET-6) blocks every way a document can be destroyed — user delete, auto-delete,
+// "Empty trash" and the automatic trash purge — until it is removed. It targets exactly one document
+// or one folder (DB check constraint); a folder hold covers that folder's whole subtree, including
+// documents added later. Rows are kept after removal as the record of who held what, and why.
+model LegalHold {
+  id              String    @id @default(uuid())
+  organizationId  String
+  departmentId    String
+  documentId      String?
+  folderId        String?
+  reason          String
+  placedByUserId  String
+  placedAt        DateTime  @default(now())
+  removedByUserId String?
+  removedAt       DateTime? // null = active
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  // Restrict, so a hold can never lose its target by cascade: a purge refuses a held document and
+  // clears the released hold rows itself; a folder with an active hold can't be deleted.
+  document     Document?    @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  folder       Folder?      @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  placedBy     User         @relation("LegalHoldPlacedBy", fields: [placedByUserId], references: [id])
+  removedBy    User?        @relation("LegalHoldRemovedBy", fields: [removedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, departmentId])
+  @@index([documentId])
+  @@index([folderId])
+  @@map("legal_hold")
+}
+
 // ───────────────────────── 8. Audit ─────────────────────────
 
 // Append-only. No update/delete path — enforce in application layer and DB grants.
 model AuditEvent {
-  id                 String   @id @default(uuid())
-  organizationId     String
-  actorUserId        String
-  action             AuditAction
-  documentId         String?
-  targetDescription  String?
-  departmentId       String?
-  isConfidential     Boolean  @default(false)
-  occurredAt         DateTime @default(now())
+  id                String         @id @default(uuid())
+  organizationId    String
+  // null only when `actorType` is `system` — events the scheduled jobs write (auto-delete, the
+  // automatic trash purge). A person's action always names them.
+  actorUserId       String?
+  actorType         AuditActorType @default(user)
+  action            AuditAction
+  documentId        String?
+  targetDescription String?
+  departmentId      String?
+  isConfidential    Boolean        @default(false)
+  occurredAt        DateTime       @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
-  actor        User         @relation("ActorUser", fields: [actorUserId], references: [id])
+  // Restrict, not Prisma's SET NULL default for an optional relation: deleting a user must never
+  // rewrite who did what in the append-only trail.
+  actor        User?        @relation("ActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
   // SET NULL so a Department-Admin purge can hard-delete the document while this append-only trail
   // survives — the event keeps its action, actor, timestamp and the doc's ref in targetDescription.
   document     Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
@@ -436,21 +500,31 @@ enum AuditAction {
   config_change
   permission_change
   workflow_transition
+  auto_delete // moved to trash by the daily auto-delete job (RET-3)
+  purge // permanently removed by the automatic trash purge
+  legal_hold_placed // RET-5
+  legal_hold_removed // RET-5
+  retention_change // auto-delete period set / changed / switched off (RET-8)
+}
+
+enum AuditActorType {
+  user
+  system
 }
 
 // ───────────────────────── 9. Storage configuration ─────────────────────────
 
 model StorageConfig {
-  id             String   @id @default(uuid())
-  organizationId String   @unique // one per org in R1
+  id             String         @id @default(uuid())
+  organizationId String         @unique // one per org in R1
   backendType    StorageBackend
-  credentials    Json     // encrypted at the application layer before write
-  status         StorageStatus @default(pending)
+  credentials    Json // encrypted at the application layer before write
+  status         StorageStatus  @default(pending)
   lastTestedAt   DateTime?
   quotaBytes     BigInt?
-  usedBytes      BigInt   @default(0)
+  usedBytes      BigInt         @default(0)
 
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@map("storage_config")
 }
@@ -469,15 +543,15 @@ enum StorageStatus {
 // ───────────────────────── 9A. Auth & platform tables ─────────────────────────
 
 model RefreshToken {
-  id           String    @id @default(uuid())
-  userId       String
-  tokenHash    String    @unique
-  deviceInfo   String?
-  ipAddress    String?
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  lastUsedAt   DateTime?
-  createdAt    DateTime  @default(now())
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  deviceInfo String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id])
 
@@ -511,16 +585,16 @@ model EmailVerificationToken {
 }
 
 model Invitation {
-  id              String   @id @default(uuid())
+  id              String           @id @default(uuid())
   organizationId  String
   departmentId    String
   roleId          String
   email           String
   invitedByUserId String
-  tokenHash       String   @unique
+  tokenHash       String           @unique
   status          InvitationStatus @default(pending)
   expiresAt       DateTime
-  createdAt       DateTime @default(now())
+  createdAt       DateTime         @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   invitedBy    User         @relation("InvitedBy", fields: [invitedByUserId], references: [id])
@@ -537,10 +611,10 @@ enum InvitationStatus {
 
 // Single-row/global config — not per organization.
 model SignupSetting {
-  id        Int      @id @default(1)
+  id        Int        @id @default(1)
   mode      SignupMode @default(invite_code)
   updatedBy String?
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime   @updatedAt
 
   @@map("signup_setting")
 }
@@ -552,13 +626,13 @@ enum SignupMode {
 }
 
 model SignupInviteCode {
-  id        String   @id @default(uuid())
-  code      String   @unique
+  id        String    @id @default(uuid())
+  code      String    @unique
   maxUses   Int?
-  usedCount Int      @default(0)
+  usedCount Int       @default(0)
   expiresAt DateTime?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
 
   @@map("signup_invite_code")
 }

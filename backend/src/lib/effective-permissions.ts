@@ -106,6 +106,7 @@ const CONFIDENTIAL_FLOOR: PermissionKey[] = [
 
 interface FolderChainEntry {
   id: string;
+  departmentId: string;
   parentFolderId: string | null;
   isConfidential: boolean;
 }
@@ -125,7 +126,7 @@ async function loadFolderChain(
     const folder: FolderChainEntry | null = await prisma.folder.findFirst({
       // Tenant isolation: a folder id from a request is never trusted on its own.
       where: { id: currentId, organizationId },
-      select: { id: true, parentFolderId: true, isConfidential: true },
+      select: { id: true, departmentId: true, parentFolderId: true, isConfidential: true },
     });
     if (!folder) break;
     chain.push(folder);
@@ -149,6 +150,17 @@ export async function resolveEffectivePermissions(
   }
 
   const chain = folderId ? await loadFolderChain(prisma, actor.organizationId, folderId) : [];
+
+  // Department binding (SECURITY_AUDIT.md H-1). A folder is only ever evaluated against its OWN
+  // department. Routes carry the department and the folder as two separate ids, and the role
+  // baseline below is looked up by the department id — so without this check, an Admin of one
+  // department could name another department's folder under their own department's URL and act on
+  // it with their own role. A folder of another department confers nothing, exactly as if the
+  // caller held no role there.
+  if (chain.some((f) => f.departmentId !== departmentId)) {
+    return { permissions: emptyPermissionMap(), source: "none", isConfidential: false };
+  }
+
   // Confidentiality flows down (Data Model §4.1). The named list can sit on *any* confidential
   // folder in the chain, so all of them are considered: being named on an outer vault reaches
   // everything inside it, and being named on an inner folder reaches that folder.
@@ -269,6 +281,28 @@ function normalize(stored: unknown): PermissionMap {
     }
   }
   return map;
+}
+
+/**
+ * Whether the actor is an **Owner** on the named list of a confidential folder — on this folder or on
+ * any confidential folder above it, the same reach `resolveConfidential` gives a named member. Inside
+ * a confidential folder, Legal Holds are placed and removed by the Owner (PRD v1.2 RET-5) rather than
+ * by department role. The Super Admin is excluded here as everywhere in a vault (§11.2).
+ */
+export async function isConfidentialOwner(
+  prisma: PrismaClient,
+  actor: PermissionActor,
+  folderId: string,
+): Promise<boolean> {
+  if (actor.isSuperAdmin) return false;
+  const chain = await loadFolderChain(prisma, actor.organizationId, folderId);
+  const confidentialIds = chain.filter((f) => f.isConfidential).map((f) => f.id);
+  if (confidentialIds.length === 0) return false;
+  const owner = await prisma.confidentialMember.findFirst({
+    where: { folderId: { in: confidentialIds }, userId: actor.userId, isOwner: true },
+    select: { id: true },
+  });
+  return owner !== null;
 }
 
 export async function hasPermission(

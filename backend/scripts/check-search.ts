@@ -10,6 +10,7 @@
  * DEV ONLY, and it writes. Point it at a development database.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -175,7 +176,7 @@ check("Super Admin (excluded from confidential) doesn't see it either", (await S
 
 // ── teardown ──
 await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
-await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
 await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });
 await prisma.version.deleteMany({ where: { document: { departmentId: dept.id } } });
 await prisma.document.deleteMany({ where: { departmentId: dept.id } });

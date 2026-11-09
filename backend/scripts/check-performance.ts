@@ -21,6 +21,8 @@
  * DEV ONLY, writes to real storage.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
+import { pdfBytes as fixturePdf } from "./_fixture-files.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -204,7 +206,7 @@ try {
   const perFile: number[] = [];
   const bulk = await timed(async () => {
     for (let i = 0; i < BULK_FILE_COUNT; i++) {
-      const bytes = Buffer.from(
+      const bytes = fixturePdf(
         `zz perf bulk ${i} ${stamp} ${"payload ".repeat(400)}`, // ~3KB each, distinct so no dedupe
       );
       const t = await timed(() =>
@@ -297,7 +299,7 @@ try {
   } catch (err) {
     console.error("[cleanup] storage issue:", err);
   }
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.share.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });

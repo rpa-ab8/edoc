@@ -5,6 +5,7 @@ import * as documentService from "./document.service.js";
 import { DocumentError } from "./document.service.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
 import type { PermissionTarget } from "../../plugins/authenticate.js";
+import { contentTypeHeader } from "../../lib/upload-formats.js";
 
 const fieldValuesSchema = z
   .array(
@@ -60,12 +61,12 @@ export default async function documentRoutes(app: FastifyInstance, opts: { prism
     "/",
     { preHandler: [...inOrg, app.requirePermission("documents.view", folderTargetFromQuery)] },
     async (request, reply) => {
-      const { folderId } = request.query as { folderId?: string };
+      const { folderId, departmentId } = request.query as { folderId?: string; departmentId?: string };
       if (!folderId) {
         return reply.code(400).send({ error: "folder_required", message: "A folder is required." });
       }
       try {
-        const documents = await documentService.listFolderDocuments(deps, actorFrom(request), folderId);
+        const documents = await documentService.listFolderDocuments(deps, actorFrom(request), folderId, departmentId);
         return reply.send({ documents });
       } catch (err) {
         return handleDocumentError(err, reply);
@@ -123,7 +124,9 @@ export default async function documentRoutes(app: FastifyInstance, opts: { prism
         versionId,
         mode,
       );
-      reply.header("Content-Type", file.mimeType);
+      reply.header("Content-Type", contentTypeHeader(file.mimeType));
+      // Serve exactly the stored type — never let a browser sniff a text file into something else.
+      reply.header("X-Content-Type-Options", "nosniff");
       reply.header("Content-Length", file.buffer.length);
       reply.header(
         "Content-Disposition",

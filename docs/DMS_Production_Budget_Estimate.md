@@ -1,4 +1,4 @@
-# DMS — Production Server & Running-Cost Estimate
+# Edoc — Production Server & Running-Cost Estimate
 
 **Prepared:** 2026-10-17 · **Basis:** the stated load in the PRD / Tech Stack doc — one organization, up to **250 users, ~50 concurrent**, files typically under 100 MB (limit 120 MB).
 

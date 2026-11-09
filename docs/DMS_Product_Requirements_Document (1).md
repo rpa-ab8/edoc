@@ -1,7 +1,7 @@
-# Product Requirements Document — Document Management System
+# Product Requirements Document — Edoc
 
 **Release:** Release 1 (MVP)
-**Version:** 1.0 — Draft for review
+**Version:** 1.0 — Draft for review, amended by v1.2 (retention, Legal Hold, standard filters — §8.14)
 **Status:** Ready for development planning
 **Audience:** Engineering, product, stakeholders
 
@@ -31,7 +31,7 @@ All foundation and design decisions are closed. The compliance detail required f
 | Identity | Global user account (one per email), holding memberships across organizations |
 | Authentication | JWT access tokens with server-side (revocable) refresh tokens; self-hosted, no third-party provider |
 | Roles | One role per user per department; a user may hold roles in many departments |
-| Retention | No automated retention/deletion in R1 (Release 2) |
+| Retention | **Amended v1.2:** an optional per-department auto-delete period and Legal Hold ship in R1 (§8.14). Retention locks, per-document-type periods, auto-archive and expiry reminders stay Release 2 |
 | Migration | No bulk import in R1; documents uploaded manually |
 | Scale | Up to 250 users, ~50 concurrent, files typically under 100 MB |
 
@@ -39,9 +39,9 @@ All foundation and design decisions are closed. The compliance detail required f
 
 ## 2. Executive summary
 
-The Document Management System (DMS) is a universal, multi-sector platform for storing, organising, finding and controlling access to documents. A single codebase serves healthcare, education, accounts, HR and legal operations — sector differences are handled through configuration rather than custom development, so onboarding a new department or sector is an administrative task, not an engineering project.
+Edoc is a universal, multi-sector platform for storing, organising, finding and controlling access to documents. A single codebase serves healthcare, education, accounts, HR and legal operations — sector differences are handled through configuration rather than custom development, so onboarding a new department or sector is an administrative task, not an engineering project.
 
-The organisation currently stores documents manually and across scattered systems, causing slow retrieval, no version control, duplication, weak access control and compliance difficulty. The DMS centralises documents under a secure, permissioned, audited system with search that reaches inside document content.
+The organisation currently stores documents manually and across scattered systems, causing slow retrieval, no version control, duplication, weak access control and compliance difficulty. Edoc centralises documents under a secure, permissioned, audited system with search that reaches inside document content.
 
 Release 1 delivers the complete daily loop — configure a department, upload (single or bulk), find, preview, share internally or by external link, with role-based permissions, versioning, trash recovery and a full audit trail. Retention automation, workflow approvals and reporting follow in Release 2, built on data captured from day one.
 
@@ -149,7 +149,7 @@ Above these sits the document's own **confidential-folder membership** — an ex
 | Organization | Super Admin, user directory, department assignment, organization settings, storage setup with test-connection, thin dashboard |
 | Department creation | Five-step wizard; five shipped templates; schema builder; vocabulary; roles matrix; auto-tag & default-sharing rules |
 | Documents & folders | Nested folders (both files and subfolders), permission inheritance with overrides, unique document ID, version history, trash & recovery |
-| Upload | Single, drag-and-drop and bulk; auto-fill; duplicate-as-new-version; non-blocking save; OCR; format support (PDF, JPEG/PNG, DOCX, XLSX) |
+| Upload | Single, drag-and-drop and bulk; auto-fill; duplicate-as-new-version; non-blocking save; OCR; format support (PDF, JPEG/PNG, DOCX, XLSX, Markdown, plain text) |
 | Search | Global search across name, metadata and OCR text; document-ID exact-match; schema-driven filters; quick views |
 | Viewing | In-browser preview, metadata panel, version history and restore, per-document activity, permission-gated download |
 | Sharing | Internal by-reference sharing, cross-department sharing with consent, external secure links (mandatory expiry), Shared-with-me / Shared-by-me with revoke |
@@ -173,7 +173,7 @@ Ordered by expected priority. Each builds on Release 1 without changing it.
 | # | Release 2 item |
 |---|---|
 | 1 | Audit export enhancements (viewer and basic export are in R1) |
-| 2 | Retention & lifecycle automation — periods, auto-archive, retention locks, expiry reminders (needs compliance detail) |
+| 2 | Retention & lifecycle automation — per-document-type periods, auto-archive, retention locks, expiry reminders (needs compliance detail). The per-department auto-delete period and Legal Hold moved into R1 in v1.2 (§8.14) |
 | 3 | Notifications — in-app and email |
 | 4 | Workflow & approvals — states, routing, approval queue |
 | 5 | Auto-extraction — OCR-driven field pre-fill with confidence tiers |
@@ -271,6 +271,7 @@ Requirements are grouped by module. Each carries an identifier, a statement of w
 | SRCH-3 | Default sort is most-recent-first. | Results are ordered by recency before any query is typed. |
 | SRCH-4 | Quick views provide Recent, Uploaded by me, Shared with me and Trash. | Each view lists the correct set for the current user and department. |
 | SRCH-5 | Search never returns documents the user cannot access. | Confidential-folder documents and out-of-permission items never appear for non-members. |
+| SRCH-6 *(v1.2)* | Every department's filter panel always shows two standard filters, with no admin setup: Document Type, and Upload Date (From – To). | From, To or both may be given; both dates are inclusive and read in the organization's time zone. They AND with each other, with schema field filters and with the search text. From after To is refused with a clear message. Results never include documents the user can't access. |
 
 ### 8.9 Document viewer
 
@@ -300,7 +301,7 @@ Requirements are grouped by module. Each carries an identifier, a statement of w
 | TRSH-1 | Deleting moves a document to trash, where it is recoverable. | The item leaves normal views but remains restorable; deleting is never immediate destruction. |
 | TRSH-2 | Trash shows who deleted an item, its origin, and an auto-remove countdown. | Restore returns the document to its origin folder with ID, metadata and version history intact; the countdown reflects the retention window (default 30 days). |
 | TRSH-3 | Permanent purge is restricted to Department Admin and requires confirmation. | Only admins see 'Empty trash'; a hard confirmation is required; purge is the only place data truly disappears. |
-| TRSH-4 | Items under a retention lock cannot be purged. | Their restore is disabled where applicable and empty-trash skips them, making retention enforceable. |
+| TRSH-4 *(amended v1.2)* | Items under a **Legal Hold** cannot be purged. | "Empty trash", a single permanent delete and the automatic trash purge all skip them; a held item stays in trash and can still be restored. Retention locks remain Release 2. |
 
 ### 8.12 Audit
 
@@ -324,6 +325,23 @@ Requirements are grouped by module. Each carries an identifier, a statement of w
 
 **Protection scope (R1):** confidentiality is enforced at the application layer against all users including Super Admin, but not against direct database or storage access. Folder-level encryption keyed to members is a separate, deferred decision.
 
+### 8.14 Retention & Legal Hold *(v1.2 amendment)*
+
+Transcribed from the v1.2 change brief. "Department Admin" means the holder of the department's retention rights (§9), which only the Department Admin role carries by default.
+
+| ID | Requirement | Acceptance criteria |
+|---|---|---|
+| RET-1 | Each department may set an optional auto-delete period in whole years. | Off by default; no template switches it on; only that department's Department Admin can set, change or switch it off; departments are independent. |
+| RET-2 | The period counts from each document's Upload Date — when it was first uploaded. | The Upload Date is fixed at first upload; a new version, metadata edit, move or share never changes it. The period applies to documents uploaded before it was switched on. |
+| RET-3 | A daily job moves expired documents to Trash. | Runs once a day at a configurable time (default 02:00 Asia/Kolkata). Documents where Upload Date + period ≤ today, not in Trash and not under a Legal Hold (directly or through any parent folder), move to Trash with all versions, reason "Auto-deleted - retention period ended", actor System. Idempotent, batched, continues past a failing document, one audit record per document. The normal trash window then applies. |
+| RET-4 | Department Admins see an Upcoming Deletions list. | Documents due within 30 days with Document ID, title, Upload Date and scheduled deletion date, soonest first; a Legal Hold can be placed from the list; confidential documents appear only to members of their folder. |
+| RET-5 | A Department Admin can place and remove a Legal Hold on a document or a folder. | A reason is mandatory; who/when/why is stored, and who/when on removal. A folder hold covers all subfolders and documents added later. Inside a confidential folder, holds are placed and removed by the folder's Owner. Held documents show a "Legal Hold" badge. |
+| RET-6 | A held document cannot be destroyed. | No user delete, auto-delete, "Empty trash" or automatic trash purge while held (server-enforced). A document already in Trash stays there but is never purged while held. Removing a hold lets the **next** daily run process an expired document, never immediately. |
+| RET-7 | Changing the period is guarded. | Setting or shortening it first returns a preview ("N documents will be moved to Trash at the next daily run") and requires explicit confirmation; lengthening or switching off does not. Switching off stops future auto-deletes but restores nothing already removed. |
+| RET-8 | Retention is audited. | Events for: auto-delete to Trash (actor System), permanent removal, hold placed (with reason), hold removed, period set / changed / switched off (old and new value), restore of an auto-deleted document. Records stay append-only, survive the document's permanent removal, and follow the confidential-audit segregation. |
+
+Restoring an auto-deleted document is limited to a Department Admin (in a confidential folder, its Owner). It returns the document to its original folder and places a Legal Hold, reason "Restored after auto-delete", so the next daily run doesn't delete it again.
+
 ---
 
 ## 9. Permission model
@@ -336,7 +354,7 @@ Three levels, each with a defined boundary. Roles are per department; only Super
 | 2 | Department Admin | One department: members, roles (if permitted), permissions, configuration. |
 | 3 | Custom roles | Per-department roles defined by an explicit permission matrix (e.g. HR Manager, Auditor, Doctor). |
 
-**Permission catalogue (grouped).** Documents (view, upload, download, edit metadata, delete, restore, version history, preview, upload version); Folders (create, rename, delete, move); Sharing (share, remove share, create link, external share, cross-department share); Workflow (approve, reject, request changes, create workflow — inactive in R1); Search (search, advanced search, saved searches); Audit (view, export, view confidential); Members (invite, remove, change role); Configuration (create/edit/delete document type, edit metadata schema, edit rules); Reports (view, export).
+**Permission catalogue (grouped).** Documents (view, upload, download, edit metadata, delete, restore, version history, preview, upload version); Folders (create, rename, delete, move); Sharing (share, remove share, create link, external share, cross-department share); Workflow (approve, reject, request changes, create workflow — inactive in R1); Search (search, advanced search, saved searches); Audit (view, export, view confidential); Members (invite, remove, change role); Configuration (create/edit/delete document type, edit metadata schema, edit rules); Retention *(v1.2)* (manage auto-delete period, place/remove Legal Hold, view upcoming deletions — Department Admin only by default; not part of the Super Admin's administrative baseline); Reports (view, export).
 
 **Effective permission — resolution order.**
 
@@ -382,7 +400,7 @@ Organization → Departments → (Memberships: User + Role)
 | Usability | Responsive web to tablet; role-appropriate landing; minimal-click upload and retrieval; English at launch. |
 | Extensibility | Storage abstraction layer allowing new backends; configuration-driven sectors; reserved columns for Release 2 features. |
 | Data integrity | Versioning never overwrites; document IDs immutable and unique; soft-delete with recovery window. |
-| Compatibility | Formats: PDF, JPEG, PNG, DOCX, XLSX; modern browsers. |
+| Compatibility | Formats: PDF, JPEG, PNG, DOCX, XLSX, Markdown (.md), plain text (.txt); modern browsers. |
 
 ---
 
@@ -454,7 +472,7 @@ Confirming that every functional requirement from the original Business Requirem
 | BRD requirement | Status |
 |---|---|
 | User authentication with roles and permissions | R1 — §8.1, §9 |
-| Upload in multiple formats (PDF, JPEG, DOCX, XLSX) | R1 — §8.7 |
+| Upload in multiple formats (PDF, JPEG, PNG, DOCX, XLSX, Markdown, plain text) | R1 — §8.7 |
 | Advanced search by data, tags, file type | R1 — §8.8 |
 | Auto-tagging based on predefined rules | R1 — department rules (§8.4) |
 | Version control with history | R1 — §8.6 |
@@ -474,4 +492,4 @@ The four items not in Release 1 are deferred for stated reasons, not oversight. 
 
 ---
 
-*End of document — Product Requirements Document, Document Management System, Release 1, Version 1.0 (Draft).*
+*End of document — Product Requirements Document, Edoc, Release 1, Version 1.0 (Draft), with the v1.2 amendment above.*

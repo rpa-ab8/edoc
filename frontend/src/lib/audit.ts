@@ -6,11 +6,15 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 export type AuditAction =
   | "view" | "upload" | "download" | "edit" | "delete" | "restore" | "share"
   | "link_access" | "role_change" | "member_change" | "config_change"
-  | "permission_change" | "workflow_transition";
+  | "permission_change" | "workflow_transition"
+  // PRD v1.2 retention events (RET-8)
+  | "auto_delete" | "purge" | "legal_hold_placed" | "legal_hold_removed" | "retention_change";
 
 export interface AuditEvent {
   id: string;
   action: AuditAction;
+  /** "system" for events the daily retention run wrote; `actorName` is then "System". */
+  actorType: "user" | "system";
   actorName: string;
   documentRef: string | null;
   targetDescription: string | null;
@@ -20,6 +24,7 @@ export interface AuditEvent {
 
 export interface AuditFilters {
   actorUserId?: string;
+  actorType?: "user" | "system";
   action?: AuditAction;
   documentQuery?: string;
   from?: string; // ISO
@@ -40,12 +45,25 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   config_change: "Config change",
   permission_change: "Permission change",
   workflow_transition: "Workflow",
+  auto_delete: "Auto-delete",
+  purge: "Permanent removal",
+  legal_hold_placed: "Legal Hold placed",
+  legal_hold_removed: "Legal Hold removed",
+  retention_change: "Retention change",
 };
 
 /** Colour weighting so destructive and privilege events stand out (AUD-2). */
 export function actionTone(action: AuditAction): "danger" | "warning" | "info" | "muted" {
-  if (action === "delete") return "danger";
-  if (action === "role_change" || action === "member_change" || action === "permission_change") return "warning";
+  if (action === "delete" || action === "auto_delete" || action === "purge") return "danger";
+  if (
+    action === "role_change" ||
+    action === "member_change" ||
+    action === "permission_change" ||
+    action === "legal_hold_placed" ||
+    action === "legal_hold_removed" ||
+    action === "retention_change"
+  )
+    return "warning";
   if (action === "share" || action === "link_access") return "info";
   return "muted";
 }
@@ -53,6 +71,7 @@ export function actionTone(action: AuditAction): "danger" | "warning" | "info" |
 function toQuery(filters: AuditFilters): string {
   const p = new URLSearchParams();
   if (filters.actorUserId) p.set("actorUserId", filters.actorUserId);
+  if (filters.actorType) p.set("actorType", filters.actorType);
   if (filters.action) p.set("action", filters.action);
   if (filters.documentQuery) p.set("documentQuery", filters.documentQuery);
   if (filters.from) p.set("from", filters.from);

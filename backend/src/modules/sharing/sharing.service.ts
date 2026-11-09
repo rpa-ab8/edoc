@@ -603,29 +603,87 @@ interface LinkResolution {
   };
 }
 
-/** Resolves a live external link by its raw token, or throws a uniform not-found/expired error.
- *  Never leaks whether the token was wrong versus revoked versus expired. */
+const linkUnavailable = () => new SharingError(404, "link_unavailable", "This link is no longer available.");
+
+/**
+ * Resolves a live external link by its raw token, or throws a uniform not-found error. Never leaks
+ * whether the token was wrong versus revoked versus expired versus no longer allowed.
+ *
+ * A link is only as good as the conditions it was created under, so they are re-checked on every
+ * open and every file fetch, against the state *now* (SECURITY_AUDIT.md H-4):
+ *   - the document is live (not in the trash);
+ *   - the sharer is still an active user, and the permission engine still grants them, for the
+ *     document's current folder, `documents.view` + `sharing.share` + `sharing.create_link` +
+ *     `sharing.external_share`. The engine forces the link keys off inside a confidential folder or
+ *     beneath one, and grants nothing for a removed or disabled membership. So "a confidential
+ *     document can never leave by link" (§11.2) and "the sharer lost access" are the same check;
+ *   - the department still allows external links.
+ * A failed check suspends the link rather than revoking it: putting the condition back (restoring
+ * from trash, re-enabling the member) brings it back, while an explicit revoke stays final. A
+ * download link whose sharer has lost `documents.download` drops to view-only.
+ */
 async function resolveLink(deps: Deps, rawToken: string): Promise<LinkResolution> {
-  const share = await deps.prisma.share.findFirst({
+  const { prisma } = deps;
+  const share = await prisma.share.findFirst({
     where: { linkToken: hashToken(rawToken), targetType: "external_link" },
     include: {
       document: {
-        select: { id: true, documentRef: true, titleValue: true, departmentId: true, currentVersionId: true },
+        select: {
+          id: true,
+          documentRef: true,
+          titleValue: true,
+          departmentId: true,
+          folderId: true,
+          currentVersionId: true,
+          status: true,
+        },
       },
     },
   });
-  if (!share || share.status !== "active" || isExpired(share)) {
-    throw new SharingError(404, "link_unavailable", "This link is no longer available.");
-  }
+  if (!share || share.status !== "active" || isExpired(share)) throw linkUnavailable();
+  const { document } = share;
+  if (document.status !== "active") throw linkUnavailable();
+
+  const [sharer, org] = await Promise.all([
+    prisma.user.findUnique({ where: { id: share.sharedByUserId }, select: { status: true } }),
+    prisma.organization.findUnique({ where: { id: share.organizationId }, select: { createdByUserId: true } }),
+  ]);
+  if (!sharer || sharer.status !== "active" || !org) throw linkUnavailable();
+
+  const { permissions } = await resolveEffectivePermissions(
+    prisma,
+    {
+      userId: share.sharedByUserId,
+      organizationId: share.organizationId,
+      isSuperAdmin: org.createdByUserId === share.sharedByUserId,
+    },
+    document.departmentId,
+    document.folderId,
+  );
+  const required = ["documents.view", "sharing.share", "sharing.create_link", "sharing.external_share"] as const;
+  if (!required.every((key) => permissions[key] === true)) throw linkUnavailable();
+
+  const rules = await departmentRules(deps, document.departmentId);
+  if (!rules.defaultSharing.externalLinksEnabled) throw linkUnavailable();
+
+  const permission: SharePermission =
+    share.permission === "download" && permissions["documents.download"] === true ? "download" : "view";
+
   return {
     share: {
       id: share.id,
       organizationId: share.organizationId,
-      permission: share.permission,
+      permission,
       documentId: share.documentId,
       sharedByUserId: share.sharedByUserId,
     },
-    document: share.document,
+    document: {
+      id: document.id,
+      documentRef: document.documentRef,
+      titleValue: document.titleValue,
+      departmentId: document.departmentId,
+      currentVersionId: document.currentVersionId,
+    },
   };
 }
 

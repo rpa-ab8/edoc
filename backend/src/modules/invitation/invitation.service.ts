@@ -60,9 +60,9 @@ async function sendInviteEmail(
 ) {
   await sendMail(env, {
     to,
-    subject: `${context.inviterName} invited you to ${context.organizationName} on DMS`,
+    subject: `${context.inviterName} invited you to ${context.organizationName} on Edoc`,
     text:
-      `${context.inviterName} has invited you to join ${context.organizationName} on DMS.\n\n` +
+      `${context.inviterName} has invited you to join ${context.organizationName} on Edoc.\n\n` +
       `Department: ${context.departmentName}\n` +
       `Role: ${context.roleName}\n\n` +
       `Accept the invitation:\n${context.url}\n\n` +

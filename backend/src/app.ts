@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import type { Env } from "./config/env.js";
 import type { PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
@@ -37,6 +37,8 @@ import { confidentialRoutes } from "./modules/confidential/confidential.routes.j
 import { ConfidentialError } from "./modules/confidential/confidential.service.js";
 import { auditRoutes } from "./modules/audit/audit.routes.js";
 import { AuditError } from "./modules/audit/audit.service.js";
+import { retentionRoutes } from "./modules/retention/retention.routes.js";
+import { RetentionError } from "./modules/retention/retention.service.js";
 
 export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyInstance {
   const app = Fastify({
@@ -93,6 +95,9 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
   // (/departments/...). Mounts at root and carries its own full paths.
   app.register(confidentialRoutes, { prisma });
   app.register(auditRoutes, { prisma, prefix: "/departments" });
+  // Retention (PRD v1.2): auto-delete period, upcoming deletions, legal holds. Spans /departments,
+  // /documents and /legal-holds, so it mounts at the root with full paths.
+  app.register(retentionRoutes, { prisma });
 
   // Polled every 15s by the container healthcheck (and by uptime monitoring) — not worth a log line.
   app.get("/health", { logLevel: "warn" }, async () => {
@@ -107,7 +112,7 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
       return reply.code(400).send({
         error: "validation_error",
         message: "Invalid request",
-        details: err.flatten().fieldErrors,
+        details: z.flattenError(err).fieldErrors,
       });
     }
     if (
@@ -121,7 +126,8 @@ export function buildApp(env: Env, prisma: PrismaClient, redis: Redis): FastifyI
       err instanceof UploadError ||
       err instanceof SharingError ||
       err instanceof ConfidentialError ||
-      err instanceof AuditError
+      err instanceof AuditError ||
+      err instanceof RetentionError
     ) {
       return reply.code(err.statusCode).send({ error: err.code, message: err.message });
     }

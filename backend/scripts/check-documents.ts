@@ -9,6 +9,7 @@
  * users, folders, and documents, then deletes all of it. Point it at a development database.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -341,7 +342,7 @@ check("the folder listing returns its active documents", listed.length === 2 && 
 
 // ── teardown ──
 await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
-await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
 // A document points at its current version and each version points back — null the pointer first
 // so neither delete trips the other's foreign key.
 await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });

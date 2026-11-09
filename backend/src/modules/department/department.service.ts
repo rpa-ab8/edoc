@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { logAuditEvent } from "../../lib/audit.js";
 import {
+  ALL_PERMISSION_KEYS,
   applyPermissionDependencies,
   findDependencyViolations,
   hasDepartmentAdminCapability,
@@ -303,6 +304,9 @@ export async function getDepartment(deps: Deps, actor: Actor, departmentId: stri
     // Absent rules mean "the defaults" rather than "no rules" — resolve here so every caller
     // (and the UI) sees one consistent shape.
     rules: (department.rules as DepartmentRules | null) ?? DEFAULT_DEPARTMENT_RULES,
+    // Read-only here (RET-1): it is changed only through the retention endpoint, which enforces the
+    // Department Admin right and the preview-and-confirm step. Never set by a template.
+    autoDeleteYears: department.autoDeleteYears,
     status: department.status,
     createdAt: department.createdAt,
     documentTypes: department.documentTypes.map((dt) => ({
@@ -772,12 +776,40 @@ async function loadRoles(deps: Deps, departmentId: string) {
   return deps.prisma.role.findMany({ where: { departmentId }, orderBy: { createdAt: "asc" } });
 }
 
+/**
+ * Role *editing* is bounded the same way role *assignment* is (canGrantRole, SECURITY_AUDIT.md H-3):
+ * nobody writes, copies, changes or deletes a role carrying access they don't hold in this department
+ * themselves. Without it `members.change_role` alone was a path to Department Admin — tick every box
+ * on your own role — and to stripping, renaming or deleting the roles above you. Editing your own role
+ * is covered too: its new permissions must still be within what you hold now, so it can only go down.
+ * The Super Admin owns the organization and is exempt (inside canGrantRole).
+ */
+async function assertRoleWithinReach(
+  deps: Deps,
+  actor: Actor,
+  departmentId: string,
+  rolePermissions: unknown,
+  message: string,
+) {
+  if (!(await canGrantRole(deps.prisma, actor, departmentId, rolePermissions))) {
+    throw new DepartmentError(403, "role_exceeds_yours", message);
+  }
+}
+
+function samePermissions(a: unknown, b: unknown): boolean {
+  const x = (a ?? {}) as Record<string, unknown>;
+  const y = (b ?? {}) as Record<string, unknown>;
+  return ALL_PERMISSION_KEYS.every((k) => (x[k] === true) === (y[k] === true));
+}
+
 export async function createRole(deps: Deps, actor: Actor, departmentId: string, input: UpsertRoleInput) {
   const { prisma } = deps;
   await assertDepartmentPermission(deps, actor, departmentId, "members.change_role");
 
   const permissions = input.permissions as PermissionMap;
   validatePermissionMap(input.name, permissions);
+  const stored = applyPermissionDependencies(permissions);
+  await assertRoleWithinReach(deps, actor, departmentId, stored, "You can't create a role with more access than your own.");
 
   const existing = await loadRoles(deps, departmentId);
   if (existing.some((r) => r.name.toLowerCase() === input.name.toLowerCase())) {
@@ -790,7 +822,7 @@ export async function createRole(deps: Deps, actor: Actor, departmentId: string,
       departmentId,
       name: input.name,
       isSystem: false,
-      permissions: applyPermissionDependencies(permissions) as Prisma.InputJsonValue,
+      permissions: stored as Prisma.InputJsonValue,
     },
   });
 
@@ -817,6 +849,7 @@ export async function copyRole(
 
   const source = await prisma.role.findFirst({ where: { id: roleId, departmentId } });
   if (!source) throw new DepartmentError(404, "role_not_found", "Role not found.");
+  await assertRoleWithinReach(deps, actor, departmentId, source.permissions, "You can't copy a role with more access than your own.");
 
   const existing = await loadRoles(deps, departmentId);
   if (existing.some((r) => r.name.toLowerCase() === newName.toLowerCase())) {
@@ -862,6 +895,17 @@ export async function updateRole(
 
   const permissions = input.permissions as PermissionMap;
   validatePermissionMap(input.name, permissions);
+  const stored = applyPermissionDependencies(permissions);
+
+  // The roles page re-saves every role at once, so an unchanged role — even one above the editor —
+  // passes untouched. Any real change must stay within the editor's reach on both sides: the role as
+  // it is now (you can't change a role above you) and the role as it will be (you can't raise it
+  // beyond yourself).
+  const unchanged = role.name === input.name && samePermissions(role.permissions, stored);
+  if (!unchanged) {
+    await assertRoleWithinReach(deps, actor, departmentId, role.permissions, "You can't change a role that has more access than your own.");
+    await assertRoleWithinReach(deps, actor, departmentId, stored, "You can't give a role more access than your own.");
+  }
 
   if (roles.some((r) => r.id !== roleId && r.name.toLowerCase() === input.name.toLowerCase())) {
     throw new DepartmentError(409, "role_name_taken", "A role with that name already exists in this department.");
@@ -883,7 +927,7 @@ export async function updateRole(
     where: { id: roleId },
     data: {
       name: input.name,
-      permissions: applyPermissionDependencies(permissions) as Prisma.InputJsonValue,
+      permissions: stored as Prisma.InputJsonValue,
     },
   });
 
@@ -905,6 +949,7 @@ export async function deleteRole(deps: Deps, actor: Actor, departmentId: string,
   const roles = await loadRoles(deps, departmentId);
   const role = roles.find((r) => r.id === roleId);
   if (!role) throw new DepartmentError(404, "role_not_found", "Role not found.");
+  await assertRoleWithinReach(deps, actor, departmentId, role.permissions, "You can't delete a role that has more access than your own.");
 
   if (role.isSystem) {
     throw new DepartmentError(
@@ -954,6 +999,25 @@ async function assertCanGrantRole(deps: Deps, actor: Actor, departmentId: string
       "role_exceeds_yours",
       "You can't give someone a role with more access than your own.",
     );
+  }
+}
+
+/**
+ * You can't act on someone above you (SECURITY_AUDIT.md M-7): changing a member's role or removing
+ * them requires that their *current* role is within your own access, the same comparison
+ * canGrantRole makes for the role you hand out. Without it `members.change_role` / `members.remove`
+ * could demote or remove Department Admins one by one while another admin remained. Acting on a peer
+ * with the same role, or on yourself, stays allowed. The Super Admin is exempt.
+ */
+async function assertMemberWithinReach(
+  deps: Deps,
+  actor: Actor,
+  departmentId: string,
+  targetRolePermissions: unknown,
+  verb: string,
+) {
+  if (!(await canGrantRole(deps.prisma, actor, departmentId, targetRolePermissions))) {
+    throw new DepartmentError(403, "member_above_you", `You can't ${verb} someone with more access than your own.`);
   }
 }
 
@@ -1024,6 +1088,7 @@ export async function changeMemberRole(
   if (!membership || membership.organizationId !== actor.organizationId) {
     throw new DepartmentError(404, "member_not_found", "That user is not a member of this department.");
   }
+  await assertMemberWithinReach(deps, actor, departmentId, membership.role.permissions, "change the role of");
 
   await assertNotLastDepartmentAdmin(deps, departmentId, userId, membership.roleId, role.id);
 
@@ -1055,6 +1120,7 @@ export async function removeMember(deps: Deps, actor: Actor, departmentId: strin
   if (!membership || membership.organizationId !== actor.organizationId) {
     throw new DepartmentError(404, "member_not_found", "That user is not a member of this department.");
   }
+  await assertMemberWithinReach(deps, actor, departmentId, membership.role.permissions, "remove");
 
   await assertNotLastDepartmentAdmin(deps, departmentId, userId, membership.roleId, null);
 

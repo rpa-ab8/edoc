@@ -1,4 +1,5 @@
 import { ApiRequestError, apiRequest, refreshAccessToken } from "./api";
+import type { CoveringHold } from "./retention";
 import { useAuthStore } from "../store/authStore";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -11,7 +12,10 @@ export interface DocumentSummary {
   fileName: string | null;
   fileSize: number | null;
   mimeType: string | null;
+  uploadedAt: string;
   updatedAt: string;
+  /** Under a Legal Hold (its own, or a folder's) — it can't be deleted. */
+  legalHold: boolean;
 }
 
 export interface DuplicateMatch {
@@ -23,7 +27,8 @@ export interface DuplicateMatch {
 }
 
 export interface DocumentFieldValue {
-  fieldDefId: string;
+  /** null for a share recipient — the home department's field definitions aren't theirs to see. */
+  fieldDefId: string | null;
   label: string;
   fieldType: string;
   value: string;
@@ -54,11 +59,17 @@ export interface DocumentDetail {
   id: string;
   documentRef: string;
   titleValue: string | null;
-  departmentId: string;
-  folderId: string;
+  // These three are null when the caller reached the document only through a share: a share points
+  // at one document, never at the folder / department / type it lives under (H-2).
+  departmentId: string | null;
+  folderId: string | null;
   status: string;
-  documentType: { id: string; name: string; idCode: string };
+  documentType: { id: string | null; name: string; idCode: string };
   currentVersionId: string | null;
+  /** The Upload Date (RET-2): fixed at first upload, the auto-delete clock. */
+  uploadedAt: string;
+  trashSource: "user" | "auto_delete" | null;
+  trashReason: string | null;
   createdAt: string;
   updatedAt: string;
   fieldValues: DocumentFieldValue[];
@@ -66,6 +77,8 @@ export interface DocumentDetail {
   // Present on the viewer's detail fetch (GET /documents/:id); absent on the shapes returned by
   // the edit/restore/version actions.
   permissions?: Record<string, boolean>;
+  /** Legal Hold state (RET-5) — on the viewer's detail fetch only. */
+  legalHold?: { held: boolean; holds: CoveringHold[]; canManage: boolean };
   activity?: DocumentActivity[];
 }
 
@@ -116,9 +129,16 @@ export interface TrashItem {
   fileName: string | null;
   mimeType: string | null;
   deletedAt: string | null;
+  /** The person who deleted it, or "System" when auto-delete moved it. */
   deletedByName: string | null;
+  trashSource: "user" | "auto_delete" | null;
+  trashReason: string | null;
   daysUntilAutoRemove: number;
-  retentionLocked: boolean;
+  /** Under a Legal Hold: it stays in trash and is never permanently removed. */
+  legalHold: boolean;
+  /** An auto-deleted document can only be restored by a Department Admin. */
+  canRestore: boolean;
+  canManageHold: boolean;
 }
 
 /** Move a document to trash (soft delete). */
@@ -179,6 +199,10 @@ async function fetchFileBlob(documentId: string, versionId?: string, download?: 
 export const fetchPreviewObjectUrl = async (documentId: string, versionId?: string) =>
   URL.createObjectURL(await fetchFileBlob(documentId, versionId));
 
+/** A Markdown / plain-text version's content, for rendering in the viewer (served as UTF-8). */
+export const fetchPreviewText = async (documentId: string, versionId?: string) =>
+  (await fetchFileBlob(documentId, versionId)).text();
+
 export async function downloadDocumentFile(documentId: string, versionId: string | undefined, fileName: string) {
   const blob = await fetchFileBlob(documentId, versionId, true);
   const url = URL.createObjectURL(blob);
@@ -191,10 +215,14 @@ export async function downloadDocumentFile(documentId: string, versionId: string
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function isPreviewable(mimeType: string | null | undefined): "pdf" | "image" | null {
+export type PreviewKind = "pdf" | "image" | "markdown" | "text";
+
+export function isPreviewable(mimeType: string | null | undefined): PreviewKind | null {
   const m = (mimeType ?? "").toLowerCase();
   if (m === "application/pdf") return "pdf";
   if (m.startsWith("image/")) return "image";
+  if (m === "text/markdown") return "markdown";
+  if (m === "text/plain") return "text";
   return null;
 }
 
@@ -290,8 +318,10 @@ export function duplicatesFromError(err: unknown): DuplicateMatch[] {
   return [];
 }
 
-export const ACCEPTED_UPLOAD_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "docx", "xlsx"];
-export const ACCEPTED_UPLOAD_ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx,.xlsx";
+// Kept equal to the server's ACCEPTED_FORMATS (backend/src/lib/upload-formats.ts); the server is the
+// authority and also verifies each file's content.
+export const ACCEPTED_UPLOAD_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "docx", "xlsx", "md", "markdown", "txt"];
+export const ACCEPTED_UPLOAD_ACCEPT = ACCEPTED_UPLOAD_EXTENSIONS.map((e) => `.${e}`).join(",");
 
 export function humanFileSize(bytes: number | null | undefined): string {
   if (bytes == null) return "—";

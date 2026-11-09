@@ -13,7 +13,7 @@ import { loadEnv } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { OCR_QUEUE_NAME, createQueueConnection, type OcrJobData } from "../lib/queue.js";
 import { getActiveStorageDriver } from "../modules/storage/storage.service.js";
-import { resolveFormat } from "../lib/upload-formats.js";
+import { extractPlainText, resolveFormat } from "../lib/upload-formats.js";
 import { refreshDocumentSearchVector } from "../lib/search-vector.js";
 
 const env = loadEnv();
@@ -50,6 +50,9 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
 async function extractText(mimeType: string, fileName: string, buffer: Buffer): Promise<string> {
   const format = resolveFormat(mimeType, fileName);
   if (!format || format.ocr === "none") return "";
+  // Text files are normally stored with their text at upload and never queued; handled here too so a
+  // re-queued or legacy version still ends up searchable.
+  if (format.ocr === "text") return extractPlainText(buffer);
   return format.ocr === "image" ? extractImageText(buffer) : extractPdfText(buffer);
 }
 

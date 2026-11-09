@@ -718,10 +718,15 @@ Per `docs/DMS_Scope_and_MVP_Definition.md` §4 and CLAUDE.md's "Current build ph
 | 12 | Audit log viewer & export | ✅ Done — backend 15 checks green (`npm run check:audit`); frontend built & compile-clean |
 | 13 | Non-functional hardening | ✅ Done — tenant-isolation 69 + access-matrix 77 checks green; performance targets met with headroom; 5 defects fixed |
 | 14 | Deployment & operations | ✅ Done — Docker/Caddy/compose/backups/CI/runbook, smoke-tested locally; first real deploy pending |
+| 15 | PRD v1.2 — Edoc rename, auto-delete period, daily retention run + automatic trash purge, Legal Hold, standard Upload Date filter | ✅ Done 2026-10-30 — `check:retention` 105 · `check:legal-hold` 67 · `check:filters` 19 · `check:rename` 137; all 13 earlier suites unchanged and green; browser-checked (no real hold/period saved). New `retention-worker` compose service |
 
 **Suite totals (2026-07-25, all green):** `permissions 30 · folders 31 · documents 40 · search 24 ·
 viewer 12 · sharing 39 · confidential 29 · trash 19 · audit 15 · tenant-isolation 69 · access-matrix 77
 · performance 11 passed / 1 skipped` — **396 assertions across twelve suites.**
+
+**Suite totals (2026-10-30, all green):** the twelve above with `access-matrix 88` and `upload 17`,
+`performance 10 passed / 2 skipped` (no OCR worker running), plus `retention 105 · legal-hold 67 ·
+filters 19 · rename 137`.
 
 **Next up:** the **first production deploy** — follow `deploy/README.md` (needs: domain, droplet,
 Brevo sender domain, R2 bucket for documents and a separate one for backups). Budget/server sizing:

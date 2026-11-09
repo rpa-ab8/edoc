@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { primaryButtonBase, secondaryButtonBase } from "./AuthCard";
 import { FileTypeIcon } from "./FileTypeIcon";
-import { RefreshIcon, TrashIcon } from "./icons";
+import { HoldIcon, RefreshIcon, TrashIcon } from "./icons";
+import { LegalHoldBadge, PlaceHoldDialog } from "./LegalHold";
 import { ApiRequestError } from "../lib/api";
 import { emptyTrash, fetchTrash, purgeDocument, restoreDocument, type TrashItem } from "../lib/documents";
+import { placeDocumentHold } from "../lib/retention";
 
 function countdownLabel(days: number): { text: string; urgent: boolean } {
   if (days <= 0) return { text: "Removing soon", urgent: true };
@@ -15,12 +17,18 @@ function countdownLabel(days: number): { text: string; urgent: boolean } {
 /**
  * The department's trash (TRSH-2/3). Anyone with restore rights sees it and can restore; only a
  * Department Admin gets "Empty trash" and per-item permanent delete, both behind a hard confirm.
+ *
+ * PRD v1.2: items the daily auto-delete moved here say so (actor "System"), and only a Department
+ * Admin may restore those (restoring places a Legal Hold). An item under a Legal Hold stays here
+ * but is never permanently removed — not by a person, not by "Empty trash", not by the daily purge.
  */
 export function TrashList({ departmentId, canPurge }: { departmentId: string; canPurge: boolean }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [holding, setHolding] = useState<TrashItem | null>(null);
 
   const { data: items = [], isLoading, error: loadError } = useQuery({
     queryKey: ["trash", departmentId],
@@ -53,7 +61,16 @@ export function TrashList({ departmentId, canPurge }: { departmentId: string; ca
 
   const empty = useMutation({
     mutationFn: () => emptyTrash(departmentId),
-    onSuccess: () => { setConfirmingEmpty(false); setError(null); refresh(); },
+    onSuccess: (result) => {
+      setConfirmingEmpty(false);
+      setError(null);
+      setNotice(
+        result.skipped > 0
+          ? `${result.purged} removed permanently. ${result.skipped} under a Legal Hold ${result.skipped === 1 ? "was" : "were"} kept.`
+          : null,
+      );
+      refresh();
+    },
     onError: (err) => setError(err instanceof ApiRequestError ? err.message : "Couldn't empty the trash."),
   });
 
@@ -68,18 +85,24 @@ export function TrashList({ departmentId, canPurge }: { departmentId: string; ca
     );
   }
 
+  const purgeable = items.filter((it) => !it.legalHold).length;
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h2 className="text-[15px] font-semibold text-ink">Trash</h2>
         <span className="text-[13.5px] text-subtle">
-          {items.length} item{items.length === 1 ? "" : "s"} · auto-removed after 30 days
+          {items.length} item{items.length === 1 ? "" : "s"} · permanently removed after 30 days, unless under a Legal
+          Hold
         </span>
-        {canPurge && items.length > 0 && (
+        {canPurge && purgeable > 0 && (
           <div className="ml-auto flex items-center gap-2">
             {confirmingEmpty ? (
               <>
-                <span className="text-[13px] text-danger">Permanently delete everything?</span>
+                <span className="text-[13px] text-danger">
+                  Permanently delete {purgeable === items.length ? "everything" : `${purgeable} item${purgeable === 1 ? "" : "s"}`}?
+                  {purgeable < items.length && " Held items are kept."}
+                </span>
                 <button
                   type="button"
                   disabled={empty.isPending}
@@ -106,6 +129,7 @@ export function TrashList({ departmentId, canPurge }: { departmentId: string; ca
       </div>
 
       {error && <p className="mb-3 text-[13px] text-danger">{error}</p>}
+      {notice && <p className="mb-3 text-[13px] font-medium text-warning">{notice}</p>}
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line bg-surface px-6 py-14 text-center">
@@ -129,11 +153,30 @@ export function TrashList({ departmentId, canPurge }: { departmentId: string; ca
             </thead>
             <tbody>
               {items.map((it) => (
-                <TrashRow key={it.id} item={it} canPurge={canPurge} busy={busyId === it.id} onAct={act} />
+                <TrashRow
+                  key={it.id}
+                  item={it}
+                  canPurge={canPurge}
+                  busy={busyId === it.id}
+                  onAct={act}
+                  onHold={() => setHolding(it)}
+                />
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {holding && (
+        <PlaceHoldDialog
+          target="document"
+          subject={`${holding.documentRef} · ${holding.titleValue ?? holding.fileName ?? "Untitled"} — stays in Trash`}
+          onClose={() => setHolding(null)}
+          onPlace={async (reason) => {
+            await placeDocumentHold(holding.id, reason);
+            await refresh();
+          }}
+        />
       )}
     </div>
   );
@@ -144,14 +187,17 @@ function TrashRow({
   canPurge,
   busy,
   onAct,
+  onHold,
 }: {
   item: TrashItem;
   canPurge: boolean;
   busy: boolean;
   onAct: (id: string, fn: () => Promise<unknown>) => Promise<void>;
+  onHold: () => void;
 }) {
   const [confirmingPurge, setConfirmingPurge] = useState(false);
   const countdown = countdownLabel(item.daysUntilAutoRemove);
+  const autoDeleted = item.trashSource === "auto_delete";
 
   return (
     <tr className="border-b border-line-muted last:border-b-0 hover:bg-surface-muted/50">
@@ -159,23 +205,56 @@ function TrashRow({
         <div className="flex items-start gap-3">
           <FileTypeIcon mimeType={item.mimeType} fileName={item.fileName} className="mt-0.5 h-9 w-9" />
           <div className="min-w-0">
-            <span className="plate px-2 py-0.5 text-[12px]">{item.documentRef}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="plate px-2 py-0.5 text-[12px]">{item.documentRef}</span>
+              {item.legalHold && <LegalHoldBadge compact />}
+            </div>
             <span className="mt-1 block truncate text-[14px] font-medium text-ink">{item.titleValue ?? item.fileName ?? "Untitled"}</span>
+            {item.trashReason && <span className="mt-0.5 block text-[12.5px] text-subtle">{item.trashReason}</span>}
           </div>
         </div>
       </td>
       <td className="hidden px-5 py-3.5 text-[14px] text-muted md:table-cell">{item.originFolderName}</td>
-      <td className="hidden px-5 py-3.5 text-[14px] text-muted md:table-cell">{item.deletedByName ?? "—"}</td>
+      <td className="hidden px-5 py-3.5 text-[14px] text-muted md:table-cell">
+        {autoDeleted ? (
+          <span className="inline-flex items-center rounded-md bg-surface-muted px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+            System
+          </span>
+        ) : (
+          (item.deletedByName ?? "—")
+        )}
+      </td>
       <td className="px-5 py-3.5">
-        <span className={`text-[13px] font-medium ${countdown.urgent ? "text-danger" : "text-muted"}`}>{countdown.text}</span>
-        {item.retentionLocked && <span className="ml-2 text-[12px] text-warning">Locked</span>}
+        {item.legalHold ? (
+          <span className="text-[13px] font-medium text-warning">Kept while held</span>
+        ) : (
+          <span className={`text-[13px] font-medium ${countdown.urgent ? "text-danger" : "text-muted"}`}>{countdown.text}</span>
+        )}
       </td>
       <td className="px-5 py-3.5 text-right">
         <div className="flex items-center justify-end gap-3">
+          {item.canManageHold && !item.legalHold && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onHold}
+              title="Keep this document in Trash and stop it being permanently removed"
+              className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-warning hover:underline disabled:opacity-40"
+            >
+              <HoldIcon size={14} /> Hold
+            </button>
+          )}
           <button
             type="button"
-            disabled={busy || item.retentionLocked}
+            disabled={busy || !item.canRestore}
             onClick={() => void onAct(item.id, () => restoreDocument(item.id))}
+            title={
+              item.canRestore
+                ? autoDeleted
+                  ? "Restore to its folder — a Legal Hold is placed so it isn't auto-deleted again"
+                  : "Restore to its folder"
+                : "Only a Department Admin can restore a document that was auto-deleted"
+            }
             className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-primary hover:underline disabled:opacity-40"
           >
             <RefreshIcon size={14} /> Restore
@@ -185,7 +264,7 @@ function TrashRow({
               <span className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={busy || item.retentionLocked}
+                  disabled={busy || item.legalHold}
                   onClick={() => void onAct(item.id, () => purgeDocument(item.id)).then(() => setConfirmingPurge(false))}
                   className={`${primaryButtonBase} bg-danger px-3 py-1.5 shadow-none`}
                 >
@@ -198,9 +277,9 @@ function TrashRow({
             ) : (
               <button
                 type="button"
-                disabled={busy || item.retentionLocked}
+                disabled={busy || item.legalHold}
                 onClick={() => setConfirmingPurge(true)}
-                title={item.retentionLocked ? "Under a retention lock" : "Delete permanently"}
+                title={item.legalHold ? "Under a Legal Hold — it can't be permanently deleted" : "Delete permanently"}
                 className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-danger hover:underline disabled:opacity-40"
               >
                 <TrashIcon size={14} /> Delete forever

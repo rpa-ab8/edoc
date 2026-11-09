@@ -10,6 +10,8 @@ export interface ConfidentialMember {
 export interface ConfidentialMembers {
   folderId: string;
   folderName: string;
+  /** Only the vault's owner may add or remove people (SECURITY_AUDIT.md M-6). */
+  canManage: boolean;
   members: ConfidentialMember[];
 }
 

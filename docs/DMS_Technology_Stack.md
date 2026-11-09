@@ -1,8 +1,8 @@
-# Document Management System — Technology Stack
+# Edoc — Technology Stack
 
 **Status:** Recommendation for review
 **Context:** Internal company product for now (one organization, up to 250 users, ~50 concurrent). Architecture remains the multi-organization design already specified — this stack simply avoids paying for scale, tooling, or managed services the project doesn't need yet.
-**Companion documents:** *DMS Product Requirements Document*, *DMS Data Model*, *DMS Scope & MVP Definition*
+**Companion documents:** *Edoc Product Requirements Document*, *Edoc Data Model*, *Edoc Scope & MVP Definition*
 
 ---
 

@@ -1,7 +1,14 @@
-# DMS — Document Management System
+# Edoc
 
-Universal, multi-sector Document Management System. See `CLAUDE.md` and `docs/` for full product
+Edoc is a universal, multi-sector document management system. See `CLAUDE.md` and `docs/` for full product
 and architecture context.
+
+## Documentation
+
+- **[Developer Guide](docs/developer/README.md)** — architecture, setup, database schema, security & permissions,
+  every backend module and function, end-to-end workflows, frontend, testing, deployment, conventions and known gaps.
+- **[API Reference](docs/API_Reference.md)** — every endpoint with guards, request/response shapes and error codes.
+- Product specs (`docs/DMS_*.md`), the security audit (`SECURITY_AUDIT.md`) and the change log (`each_update.md`).
 
 ## Stack
 
@@ -60,6 +67,29 @@ cp .env.example .env              # single shared .env, read by docker-compose, 
    ```
 
    The placeholder page calls the backend's `/health` endpoint and displays the result.
+
+5. **Optional workers** (separate terminals):
+
+   ```bash
+   npm run worker:dev --workspace backend             # OCR, so scanned files become searchable
+   npm run worker:retention:dev --workspace backend   # daily auto-delete + Trash purge (02:00 IST)
+   npm run retention:run-once --workspace backend     # run the retention job once, now, and exit
+   ```
+
+   Nothing is ever auto-deleted unless a Department Admin sets an auto-delete period for their
+   department (Department settings → Retention). Documents under a Legal Hold are never deleted.
+
+## Checks
+
+The audit trail is append-only in the database (SECURITY_AUDIT.md M-1), so the suites can only remove
+their own audit-event fixtures on a database marked disposable. Run this once on a **dev** database
+(it refuses `NODE_ENV=production` and non-local hosts; never do it on production):
+`npm run db:mark-disposable --workspace backend`.
+
+Each suite is a script against the dev database (`npm run check:<name> --workspace backend`):
+`permissions`, `folders`, `documents`, `upload`, `search`, `viewer`, `sharing`, `confidential`,
+`trash`, `audit`, `tenant-isolation`, `access-matrix`, `performance`, and for PRD v1.2 `retention`,
+`legal-hold`, `filters` and `rename` (the last needs no database).
 
 ## Stopping
 

@@ -4,12 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { primaryButtonBase, secondaryButtonBase } from "../components/AuthCard";
 import { FileTypeIcon } from "../components/FileTypeIcon";
 import { MetadataFields, type FieldValues } from "../components/upload/MetadataFields";
+import { LegalHoldBadge, PlaceHoldDialog } from "../components/LegalHold";
 import {
   CheckCircleIcon,
   ChevronLeftIcon,
   ClockIcon,
   CopyIcon,
   DownloadIcon,
+  HoldIcon,
   PencilIcon,
   RefreshIcon,
   TrashIcon,
@@ -20,18 +22,23 @@ import { ShareDialog } from "../components/ShareDialog";
 import { ApiRequestError } from "../lib/api";
 import { fetchDepartment } from "../lib/departments";
 import {
+  ACCEPTED_UPLOAD_ACCEPT,
   deleteDocument,
   downloadDocumentFile,
   editDocumentMetadata,
   fetchDocument,
   fetchDocumentActivity,
   fetchPreviewObjectUrl,
+  fetchPreviewText,
   humanFileSize,
   isPreviewable,
   restoreDocumentVersion,
   uploadNewVersion,
   type DocumentDetail,
 } from "../lib/documents";
+import { LazyMarkdownView } from "../components/LazyMarkdownView";
+import { placeDocumentHold, removeLegalHold } from "../lib/retention";
+import { useAuthStore } from "../store/authStore";
 
 const ACTION_LABEL: Record<string, string> = {
   view: "viewed",
@@ -42,6 +49,9 @@ const ACTION_LABEL: Record<string, string> = {
   delete: "deleted",
   share: "shared",
   link_access: "opened a link",
+  auto_delete: "auto-deleted it — retention period ended",
+  legal_hold_placed: "placed a Legal Hold",
+  legal_hold_removed: "lifted a Legal Hold",
 };
 
 function whenLabel(iso: string): string {
@@ -61,13 +71,17 @@ export function DocumentViewerPage() {
   const [editing, setEditing] = useState(false);
   const [editValues, setEditValues] = useState<FieldValues>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Markdown / plain-text files are previewed from their text, not an object URL.
+  const [previewText, setPreviewText] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [holdOpen, setHoldOpen] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+  const myName = useAuthStore((s) => s.user?.fullName ?? "You");
 
   const { data: doc, isLoading, error } = useQuery({
     queryKey: ["document", documentId],
@@ -89,6 +103,10 @@ export function DocumentViewerPage() {
   // preview — no version history and no activity feed. Those are gated on the same permission that
   // governs seeing the version chain (bug 3).
   const canSeeHistory = perms["documents.version_history"] === true;
+  // Legal Hold (RET-5/6): a held document can't be deleted, so Delete isn't offered at all.
+  const hold = doc?.legalHold;
+  const held = hold?.held === true;
+  const canManageHold = hold?.canManage === true;
 
   const currentVersion = doc?.versions.find((v) => v.id === doc.currentVersionId) ?? doc?.versions.at(-1);
   const previewType = isPreviewable(currentVersion?.mimeType);
@@ -96,7 +114,7 @@ export function DocumentViewerPage() {
   // The type's full field defs (with options) — only needed to *edit* metadata.
   const { data: department } = useQuery({
     queryKey: ["department-detail", doc?.departmentId],
-    queryFn: () => fetchDepartment(doc!.departmentId),
+    queryFn: () => fetchDepartment(doc!.departmentId!),
     enabled: editing && Boolean(doc?.departmentId),
     retry: false,
   });
@@ -109,12 +127,26 @@ export function DocumentViewerPage() {
   useEffect(() => {
     if (!docId || !currentVersionId || !canPreview || !previewType) {
       setPreviewUrl(null);
+      setPreviewText(null);
       return;
     }
     let objectUrl: string | null = null;
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewFailed(false);
+    if (previewType === "markdown" || previewType === "text") {
+      setPreviewUrl(null);
+      fetchPreviewText(docId, currentVersionId)
+        .then((text) => {
+          if (!cancelled) setPreviewText(text);
+        })
+        .catch(() => setPreviewFailed(true))
+        .finally(() => setPreviewLoading(false));
+      return () => {
+        cancelled = true;
+      };
+    }
+    setPreviewText(null);
     fetchPreviewObjectUrl(docId, currentVersionId)
       .then((url) => {
         if (cancelled) {
@@ -157,7 +189,7 @@ export function DocumentViewerPage() {
   function startEditing() {
     if (!doc) return;
     const values: FieldValues = {};
-    for (const fv of doc.fieldValues) values[fv.fieldDefId] = fv.value;
+    for (const fv of doc.fieldValues) if (fv.fieldDefId) values[fv.fieldDefId] = fv.value;
     setEditValues(values);
     setEditing(true);
   }
@@ -183,7 +215,8 @@ export function DocumentViewerPage() {
   // a pasted link) does it fall back to the document's own folder.
   function goBack() {
     if (location.key !== "default") navigate(-1);
-    else if (doc) navigate(`/w/${doc.departmentId}/f/${doc.folderId}`);
+    // A share recipient isn't told the home folder, so they return to their own start page.
+    else if (doc?.departmentId && doc.folderId) navigate(`/w/${doc.departmentId}/f/${doc.folderId}`);
     else navigate("/");
   }
 
@@ -229,7 +262,7 @@ export function DocumentViewerPage() {
               <UsersIcon size={15} /> Share
             </button>
           )}
-          {canDelete && (
+          {canDelete && !held && (
             <button
               type="button"
               disabled={busy}
@@ -273,7 +306,7 @@ export function DocumentViewerPage() {
           ref={versionInputRef}
           type="file"
           className="hidden"
-          accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(e) => void onVersionFile(e)}
         />
       </header>
@@ -296,7 +329,17 @@ export function DocumentViewerPage() {
             />
           ) : previewLoading ? (
             <PreviewMessage title="Loading preview…" body="" />
-          ) : previewFailed || !previewUrl ? (
+          ) : previewFailed || (!previewUrl && previewText === null) ? (
+            <PreviewMessage title="Couldn't load the preview" body="The file may be unavailable in storage." />
+          ) : previewType === "markdown" || previewType === "text" ? (
+            <div className="h-[82vh] overflow-auto rounded-lg border border-line bg-surface px-8 py-7 shadow-card">
+              {previewType === "markdown" ? (
+                <LazyMarkdownView source={previewText ?? ""} />
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-mono text-[13.5px] leading-relaxed text-ink">{previewText}</pre>
+              )}
+            </div>
+          ) : !previewUrl ? (
             <PreviewMessage title="Couldn't load the preview" body="The file may be unavailable in storage." />
           ) : previewType === "image" ? (
             <div className="flex h-full items-center justify-center">
@@ -328,7 +371,64 @@ export function DocumentViewerPage() {
               <CopyIcon size={14} />
             </button>
           </div>
-          <p className="mt-2 text-[13px] text-subtle">{doc.documentType.name}</p>
+          <p className="mt-2 text-[13px] text-subtle">
+            {doc.documentType.name} · Uploaded{" "}
+            {new Date(doc.uploadedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+          </p>
+
+          {/* Legal Hold (RET-5) — the badge for everyone; the reasons and controls for those who manage holds. */}
+          {held && (
+            <section className="mt-5 rounded-xl border border-warning/25 bg-warning-tint/60 px-4 py-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <LegalHoldBadge />
+                <span className="text-[12.5px] text-warning">Can't be deleted while held</span>
+              </div>
+              {hold!.holds.length > 0 && (
+                <ul className="mt-3 space-y-3">
+                  {hold!.holds.map((h) => (
+                    <li key={h.id} className="text-[13px] leading-relaxed">
+                      <p className="font-medium text-ink">{h.reason}</p>
+                      <p className="text-subtle">
+                        {h.scope === "folder" ? `On the folder "${h.folderName}" · ` : ""}
+                        {h.placedByName} · {new Date(h.placedAt).toLocaleDateString()}
+                      </p>
+                      {h.scope === "document" && canManageHold && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              await removeLegalHold(h.id);
+                              queryClient.setQueryData<DocumentDetail>(["document", documentId], (prev) => {
+                                if (!prev?.legalHold) return prev;
+                                const holds = prev.legalHold.holds.filter((x) => x.id !== h.id);
+                                return { ...prev, legalHold: { ...prev.legalHold, holds, held: holds.length > 0 } };
+                              });
+                            }, "Legal Hold lifted.")
+                          }
+                          className="mt-1 text-[12.5px] font-semibold text-warning hover:underline"
+                        >
+                          Lift hold
+                        </button>
+                      )}
+                      {h.scope === "folder" && canManageHold && (
+                        <p className="mt-0.5 text-[12px] text-subtle">Lift it from the folder.</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+          {canManageHold && !hold!.holds.some((h) => h.scope === "document") && (
+            <button
+              type="button"
+              onClick={() => setHoldOpen(true)}
+              className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-warning hover:underline"
+            >
+              <HoldIcon size={14} /> Place Legal Hold
+            </button>
+          )}
 
           {/* Metadata */}
           <section className="mt-6">
@@ -360,7 +460,7 @@ export function DocumentViewerPage() {
             ) : doc.fieldValues.length > 0 ? (
               <dl className="space-y-2.5">
                 {doc.fieldValues.map((fv) => (
-                  <div key={fv.fieldDefId} className="flex justify-between gap-4">
+                  <div key={fv.fieldDefId ?? fv.label} className="flex justify-between gap-4">
                     <dt className="text-[13.5px] text-subtle">{fv.label}</dt>
                     <dd className="text-right text-[13.5px] font-medium text-ink">{fv.value}</dd>
                   </div>
@@ -432,12 +532,41 @@ export function DocumentViewerPage() {
         </aside>
       </div>
 
-      {shareOpen && (
+      {shareOpen && doc.departmentId && (
         <ShareDialog
           documentId={doc.id}
           departmentId={doc.departmentId}
           permissions={perms}
           onClose={() => setShareOpen(false)}
+        />
+      )}
+      {holdOpen && (
+        <PlaceHoldDialog
+          target="document"
+          subject={`${doc.documentRef} · ${doc.titleValue ?? currentVersion?.fileName ?? "Untitled"}`}
+          onClose={() => setHoldOpen(false)}
+          onPlace={async (reason) => {
+            const { hold: placed } = await placeDocumentHold(doc.id, reason);
+            // Update in place rather than re-fetching: a re-fetch would log a view nobody made.
+            queryClient.setQueryData<DocumentDetail>(["document", documentId], (prev) =>
+              prev?.legalHold
+                ? {
+                    ...prev,
+                    legalHold: {
+                      ...prev.legalHold,
+                      held: true,
+                      holds: [
+                        ...prev.legalHold.holds,
+                        { id: placed.id, scope: "document", folderId: null, folderName: null, reason: placed.reason, placedAt: placed.placedAt, placedByName: myName },
+                      ],
+                    },
+                  }
+                : prev,
+            );
+            const activity = await fetchDocumentActivity(documentId).catch(() => undefined);
+            if (activity) queryClient.setQueryData<DocumentDetail>(["document", documentId], (prev) => (prev ? { ...prev, activity } : prev));
+            setMessage({ text: "Legal Hold placed.", ok: true });
+          }}
         />
       )}
     </div>

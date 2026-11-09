@@ -26,6 +26,8 @@ import { FileTypeIcon } from "../components/FileTypeIcon";
 import { UploadPanel } from "../components/upload/UploadPanel";
 import { NeedsDetailsPanel } from "../components/upload/NeedsDetailsPanel";
 import { SearchFilterPanel } from "../components/search/SearchFilterPanel";
+import { LegalHoldBadge, PlaceHoldDialog } from "../components/LegalHold";
+import { placeFolderHold, removeLegalHold } from "../lib/retention";
 import { SharesList } from "../components/SharesList";
 import { TrashList } from "../components/TrashList";
 import {
@@ -36,7 +38,13 @@ import {
 import { FolderPermissionsDialog } from "../components/FolderPermissionsDialog";
 import { MoveFolderDialog } from "../components/MoveFolderDialog";
 import { useAuthStore } from "../store/authStore";
-import { searchDocuments, SHARE_QUICK_VIEWS, type QuickView, type SearchFilter } from "../lib/search";
+import {
+  searchDocuments,
+  SHARE_QUICK_VIEWS,
+  uploadDateRangeError,
+  type QuickView,
+  type SearchFilter,
+} from "../lib/search";
 import { ApiRequestError } from "../lib/api";
 import { fetchDepartment, fetchDepartments } from "../lib/departments";
 import {
@@ -48,6 +56,7 @@ import {
   renameFolder,
 } from "../lib/folders";
 import {
+  ACCEPTED_UPLOAD_ACCEPT,
   deleteDocument,
   fetchFolderDocuments,
   fetchNeedsDetails,
@@ -67,6 +76,8 @@ export function DepartmentWorkspacePage() {
   const [manageFolderId, setManageFolderId] = useState<string | null>(null);
   const [permsFolderId, setPermsFolderId] = useState<string | null>(null);
   const [movingFolderId, setMovingFolderId] = useState<string | null>(null);
+  const [holdFolderId, setHoldFolderId] = useState<string | null>(null);
+  const [confirmLiftHold, setConfirmLiftHold] = useState(false);
   const queryClient = useQueryClient();
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -98,6 +109,10 @@ export function DepartmentWorkspacePage() {
       return [];
     }
   }, [searchParams]);
+  // The standard Upload Date filter (SRCH-6), inclusive YYYY-MM-DD bounds in the URL like the rest.
+  const uploadedFrom = searchParams.get("from") ?? "";
+  const uploadedTo = searchParams.get("to") ?? "";
+  const dateRangeError = uploadDateRangeError(uploadedFrom, uploadedTo);
   const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
   const [showFilters, setShowFilters] = useState(false);
 
@@ -117,6 +132,8 @@ export function DepartmentWorkspacePage() {
       p.delete("q");
       p.delete("type");
       p.delete("filters");
+      p.delete("from");
+      p.delete("to");
       if (view) p.set("view", view);
       else p.delete("view");
     });
@@ -132,6 +149,20 @@ export function DepartmentWorkspacePage() {
     });
   const setFilters = (next: SearchFilter[]) =>
     updateSearch((p) => (next.length ? p.set("filters", JSON.stringify(next)) : p.delete("filters")));
+  const setUploadDateRange = (from: string, to: string) =>
+    updateSearch((p) => {
+      if (from) p.set("from", from);
+      else p.delete("from");
+      if (to) p.set("to", to);
+      else p.delete("to");
+    });
+  const clearFilters = () =>
+    updateSearch((p) => {
+      p.delete("type");
+      p.delete("filters");
+      p.delete("from");
+      p.delete("to");
+    });
   const clearSearch = () => {
     setSearchInput("");
     updateSearch((p) => {
@@ -139,6 +170,8 @@ export function DepartmentWorkspacePage() {
       p.delete("view");
       p.delete("type");
       p.delete("filters");
+      p.delete("from");
+      p.delete("to");
     });
   };
 
@@ -224,19 +257,28 @@ export function DepartmentWorkspacePage() {
   const isShareView = quickView !== null && SHARE_QUICK_VIEWS.includes(quickView);
   const isTrashView = quickView === "trash";
   const searchActive =
-    Boolean(activeQuery) || quickView !== null || filters.length > 0 || Boolean(filterTypeId);
+    Boolean(activeQuery) ||
+    quickView !== null ||
+    filters.length > 0 ||
+    Boolean(filterTypeId) ||
+    Boolean(uploadedFrom || uploadedTo);
+  // Standard filters (type, upload date) plus schema field filters — what the Filters button counts.
+  const activeFilterCount = filters.length + (filterTypeId ? 1 : 0) + (uploadedFrom || uploadedTo ? 1 : 0);
   const { data: searchResults, isFetching: searchLoading } = useQuery({
-    queryKey: ["search", departmentId, activeQuery, quickView, filterTypeId, JSON.stringify(filters)],
+    queryKey: ["search", departmentId, activeQuery, quickView, filterTypeId, JSON.stringify(filters), uploadedFrom, uploadedTo],
     queryFn: () =>
       searchDocuments(departmentId, {
         q: activeQuery || undefined,
         documentTypeId: filterTypeId || undefined,
         quickView: quickView ?? undefined,
         filters: filters.length ? filters : undefined,
+        uploadedFrom: uploadedFrom || undefined,
+        uploadedTo: uploadedTo || undefined,
       }),
     enabled:
       Boolean(departmentId) &&
       searchActive &&
+      !dateRangeError &&
       !isShareView &&
       !isTrashView &&
       access?.permissions["search.search"] === true,
@@ -286,6 +328,8 @@ export function DepartmentWorkspacePage() {
   const canRename = permissions["folders.rename"] === true;
   const canDelete = permissions["folders.delete"] === true;
   const canMove = permissions["folders.move"] === true;
+  // Resolved by the server for this folder: the Department Admin right, or a vault's Owner (RET-5).
+  const canManageHold = access.canManageLegalHold === true;
   // Confidential recovery is a Super-Admin / Department-Admin authority (CNF-4). Department-Admin
   // capability is holding both member-management and rules editing (see the backend constant).
   const canDeleteDoc = permissions["documents.delete"] === true;
@@ -409,10 +453,10 @@ export function DepartmentWorkspacePage() {
             type="button"
             onClick={() => setShowFilters((v) => !v)}
             className={`${secondaryButtonBase} flex items-center gap-2 ${
-              filters.length || filterTypeId ? "border-primary text-primary" : ""
+              activeFilterCount ? "border-primary text-primary" : ""
             }`}
           >
-            <SlidersIcon size={15} /> Filters{filters.length ? ` · ${filters.length}` : ""}
+            <SlidersIcon size={15} /> Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
           </button>
         )}
         {/* The needs-details queue is department-wide — a real attention signal, styled as an alert
@@ -604,6 +648,7 @@ export function DepartmentWorkspacePage() {
                   <LockIcon size={13} /> Confidential
                 </span>
               )}
+              {current?.legalHold && <LegalHoldBadge inherited={current.legalHold === "inherited"} />}
               {current?.isConfidential && (
                 <button
                   type="button"
@@ -622,6 +667,46 @@ export function DepartmentWorkspacePage() {
                 >
                   Folder access
                 </button>
+              )}
+              {current && canManageHold && !current.legalHold && (
+                <button
+                  type="button"
+                  onClick={() => setHoldFolderId(current.id)}
+                  title="Stop everything in this folder from being deleted"
+                  className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-warning hover:bg-warning-tint"
+                >
+                  Place Legal Hold
+                </button>
+              )}
+              {current && canManageHold && current.legalHold === "held" && current.legalHoldId && (
+                confirmLiftHold ? (
+                  <span className="flex items-center gap-2 rounded-md bg-warning-tint px-2.5 py-1 text-[12.5px] text-warning">
+                    Lift the hold? Expired documents go to Trash at the next daily run.
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void run(async () => {
+                          await removeLegalHold(current.legalHoldId!);
+                          setConfirmLiftHold(false);
+                        })
+                      }
+                      className="font-semibold underline"
+                    >
+                      Lift
+                    </button>
+                    <button type="button" onClick={() => setConfirmLiftHold(false)} className="text-muted hover:text-ink">
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmLiftHold(true)}
+                    className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-warning hover:bg-warning-tint"
+                  >
+                    Lift hold
+                  </button>
+                )
               )}
               {current && canRename && (
                 <button
@@ -648,7 +733,7 @@ export function DepartmentWorkspacePage() {
                   <FolderMoveIcon size={16} />
                 </button>
               )}
-              {current && canDelete && (
+              {current && canDelete && current.legalHold !== "held" && (
                 <button
                   type="button"
                   aria-label="Delete folder"
@@ -773,6 +858,11 @@ export function DepartmentWorkspacePage() {
             onDocumentTypeChange={setFilterTypeId}
             filters={filters}
             onFiltersChange={setFilters}
+            uploadedFrom={uploadedFrom}
+            uploadedTo={uploadedTo}
+            onUploadedChange={setUploadDateRange}
+            dateRangeError={dateRangeError}
+            onClearAll={clearFilters}
             onClose={() => setShowFilters(false)}
           />
         )}
@@ -804,6 +894,7 @@ export function DepartmentWorkspacePage() {
           <SearchResultsView
             results={searchResults ?? []}
             loading={searchLoading}
+            blockedReason={dateRangeError}
             label={
               quickView
                 ? QUICK_VIEW_LABELS[quickView]
@@ -845,6 +936,7 @@ export function DepartmentWorkspacePage() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className="plate px-2 py-0.5">{doc.documentRef}</span>
+                              {doc.legalHold && <LegalHoldBadge compact />}
                               <button
                                 type="button"
                                 aria-label="Copy document ID"
@@ -884,7 +976,8 @@ export function DepartmentWorkspacePage() {
                               <RefreshIcon size={14} /> New version
                             </button>
                           )}
-                          {canDeleteDoc && (
+                          {/* A held document can't be deleted (RET-6) — the server refuses it too. */}
+                          {canDeleteDoc && !doc.legalHold && (
                             <button
                               type="button"
                               title="Move to trash"
@@ -999,7 +1092,7 @@ export function DepartmentWorkspacePage() {
         ref={versionInputRef}
         type="file"
         className="hidden"
-        accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx"
+        accept={ACCEPTED_UPLOAD_ACCEPT}
         onChange={(e) => void onVersionFileChosen(e)}
       />
 
@@ -1011,7 +1104,13 @@ export function DepartmentWorkspacePage() {
           subject={subject.toLowerCase()}
           documentTypes={documentTypes}
           initialFiles={uploadFiles}
-          onClose={() => setUploadFiles(null)}
+          onClose={(filedToFolderId) => {
+            setUploadFiles(null);
+            // Files sent to another folder than the one open: go there, so they're visible.
+            if (filedToFolderId && filedToFolderId !== folderId) {
+              navigate(`/w/${departmentId}/f/${filedToFolderId}`);
+            }
+          }}
           onUploaded={() => void refreshAfterUpload()}
         />
       )}
@@ -1055,6 +1154,19 @@ export function DepartmentWorkspacePage() {
       {recoveryOpen && (
         <ConfidentialRecoveryDialog departmentId={departmentId} onClose={() => setRecoveryOpen(false)} />
       )}
+      {holdFolderId && folders.find((f) => f.id === holdFolderId) && (
+        <PlaceHoldDialog
+          target="folder"
+          subject={`${folders.find((f) => f.id === holdFolderId)!.name} — and every folder inside it`}
+          onClose={() => setHoldFolderId(null)}
+          onPlace={async (reason) => {
+            await placeFolderHold(departmentId, holdFolderId, reason);
+            // Hold state shows on the folder, its subtree and every document listed under them.
+            await Promise.all([refetchFolders(), refetchDocuments()]);
+            void queryClient.invalidateQueries({ queryKey: ["search", departmentId] });
+          }}
+        />
+      )}
     </WorkspaceShell>
   );
 }
@@ -1073,12 +1185,23 @@ function SearchResultsView({
   loading,
   label,
   onClear,
+  blockedReason,
 }: {
   results: import("../lib/search").SearchResult[];
   loading: boolean;
   label: string;
   onClear: () => void;
+  /** Why no search was run (an invalid Upload Date range) — shown instead of a false "No matches". */
+  blockedReason?: string | null;
 }) {
+  if (blockedReason) {
+    return (
+      <div className="mt-6 rounded-2xl border border-dashed border-line bg-surface px-6 py-12 text-center">
+        <p className="text-[16px] font-semibold text-ink">Fix the Upload Date range</p>
+        <p className="mt-1.5 text-[14px] text-subtle">{blockedReason} Change either date to see results.</p>
+      </div>
+    );
+  }
   return (
     <div className="mt-6">
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -1121,6 +1244,7 @@ function SearchResultsView({
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="plate px-2 py-0.5">{doc.documentRef}</span>
+                          {doc.legalHold && <LegalHoldBadge compact />}
                           <button
                             type="button"
                             aria-label="Copy document ID"

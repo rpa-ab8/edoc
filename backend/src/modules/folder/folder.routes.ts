@@ -90,9 +90,9 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId/path",
     { preHandler: [...inOrg, app.requirePermission("documents.view")] },
     async (request, reply) => {
-      const { folderId } = request.params as { folderId: string };
+      const { departmentId, folderId } = request.params as { departmentId: string; folderId: string };
       try {
-        const path = await folderService.folderPath(deps, actorFrom(request), folderId);
+        const path = await folderService.folderPath(deps, actorFrom(request), folderId, departmentId);
         return reply.send({ path });
       } catch (err) {
         return handleFolderError(err, reply);
@@ -119,10 +119,10 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId",
     { preHandler: [...inOrg, app.requirePermission("folders.rename")] },
     async (request, reply) => {
-      const { folderId } = request.params as { folderId: string };
+      const { departmentId, folderId } = request.params as { departmentId: string; folderId: string };
       const body = renameFolderSchema.parse(request.body);
       try {
-        const folder = await folderService.renameFolder(deps, actorFrom(request), folderId, body.name);
+        const folder = await folderService.renameFolder(deps, actorFrom(request), folderId, body.name, departmentId);
         return reply.send({ folder });
       } catch (err) {
         return handleFolderError(err, reply);
@@ -151,7 +151,7 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
       ],
     },
     async (request, reply) => {
-      const { folderId } = request.params as { folderId: string };
+      const { departmentId, folderId } = request.params as { departmentId: string; folderId: string };
       const body = moveFolderSchema.parse(request.body);
       try {
         const result = await folderService.moveFolder(
@@ -159,6 +159,7 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
           actorFrom(request),
           folderId,
           body.parentFolderId,
+          departmentId,
         );
         return reply.send(result);
       } catch (err) {
@@ -171,9 +172,9 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId",
     { preHandler: [...inOrg, app.requirePermission("folders.delete")] },
     async (request, reply) => {
-      const { folderId } = request.params as { folderId: string };
+      const { departmentId, folderId } = request.params as { departmentId: string; folderId: string };
       try {
-        const result = await folderService.deleteFolder(deps, actorFrom(request), folderId);
+        const result = await folderService.deleteFolder(deps, actorFrom(request), folderId, departmentId);
         return reply.send(result);
       } catch (err) {
         return handleFolderError(err, reply);
@@ -186,9 +187,9 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId/permissions",
     { preHandler: [...inOrg, app.requirePermission("configuration.edit_rules", departmentOnlyTarget)] },
     async (request, reply) => {
-      const { folderId } = request.params as { folderId: string };
+      const { departmentId, folderId } = request.params as { departmentId: string; folderId: string };
       try {
-        return reply.send(await folderService.listFolderPermissions(deps, actorFrom(request), folderId));
+        return reply.send(await folderService.listFolderPermissions(deps, actorFrom(request), folderId, departmentId));
       } catch (err) {
         return handleFolderError(err, reply);
       }
@@ -199,11 +200,11 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId/permissions/:roleId",
     { preHandler: [...inOrg, app.requirePermission("configuration.edit_rules", departmentOnlyTarget)] },
     async (request, reply) => {
-      const { folderId, roleId } = request.params as { folderId: string; roleId: string };
+      const { departmentId, folderId, roleId } = request.params as { departmentId: string; folderId: string; roleId: string };
       const body = overrideSchema.parse(request.body);
       try {
         return reply.send(
-          await folderService.setFolderPermission(deps, actorFrom(request), folderId, roleId, body.restrict),
+          await folderService.setFolderPermission(deps, actorFrom(request), folderId, roleId, body.restrict, departmentId),
         );
       } catch (err) {
         return handleFolderError(err, reply);
@@ -215,10 +216,10 @@ export default async function folderRoutes(app: FastifyInstance, opts: { prisma:
     "/:departmentId/folders/:folderId/permissions/:roleId",
     { preHandler: [...inOrg, app.requirePermission("configuration.edit_rules", departmentOnlyTarget)] },
     async (request, reply) => {
-      const { folderId, roleId } = request.params as { folderId: string; roleId: string };
+      const { departmentId, folderId, roleId } = request.params as { departmentId: string; folderId: string; roleId: string };
       try {
         return reply.send(
-          await folderService.clearFolderPermission(deps, actorFrom(request), folderId, roleId),
+          await folderService.clearFolderPermission(deps, actorFrom(request), folderId, roleId, departmentId),
         );
       } catch (err) {
         return handleFolderError(err, reply);

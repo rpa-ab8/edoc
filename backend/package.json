@@ -8,6 +8,9 @@
     "dev": "dotenv -e ../.env -- tsx watch src/index.ts",
     "worker": "dotenv -e ../.env -- tsx src/worker/ocr.worker.ts",
     "worker:dev": "dotenv -e ../.env -- tsx watch src/worker/ocr.worker.ts",
+    "worker:retention": "dotenv -e ../.env -- tsx src/worker/retention.worker.ts",
+    "worker:retention:dev": "dotenv -e ../.env -- tsx watch src/worker/retention.worker.ts",
+    "retention:run-once": "dotenv -e ../.env -- tsx src/worker/retention.worker.ts --once",
     "build": "tsc -p tsconfig.json",
     "start": "dotenv -e ../.env -- node dist/index.js",
     "lint": "eslint src",
@@ -16,6 +19,7 @@
     "prisma:migrate": "dotenv -e ../.env -- prisma migrate dev",
     "prisma:studio": "dotenv -e ../.env -- prisma studio",
     "prisma:seed": "dotenv -e ../.env -- tsx prisma/seed.ts",
+    "db:mark-disposable": "dotenv -e ../.env -- tsx scripts/db-mark-disposable.ts",
     "check:permissions": "dotenv -e ../.env -- tsx scripts/check-permission-engine.ts",
     "check:folders": "dotenv -e ../.env -- tsx scripts/check-folders.ts",
     "check:documents": "dotenv -e ../.env -- tsx scripts/check-documents.ts",
@@ -28,7 +32,22 @@
     "check:audit": "dotenv -e ../.env -- tsx scripts/check-audit.ts",
     "check:tenant-isolation": "dotenv -e ../.env -- tsx scripts/check-tenant-isolation.ts",
     "check:access-matrix": "dotenv -e ../.env -- tsx scripts/check-access-matrix.ts",
-    "check:performance": "dotenv -e ../.env -- tsx scripts/check-performance.ts"
+    "check:department-binding": "dotenv -e ../.env -- tsx scripts/check-department-binding.ts",
+    "check:share-exposure": "dotenv -e ../.env -- tsx scripts/check-share-exposure.ts",
+    "check:role-escalation": "dotenv -e ../.env -- tsx scripts/check-role-escalation.ts",
+    "check:member-hierarchy": "dotenv -e ../.env -- tsx scripts/check-member-hierarchy.ts",
+    "check:link-revalidation": "dotenv -e ../.env -- tsx scripts/check-link-revalidation.ts",
+    "check:audit-immutability": "dotenv -e ../.env -- tsx scripts/check-audit-immutability.ts",
+    "check:session-revocation": "dotenv -e ../.env -- tsx scripts/check-session-revocation.ts",
+    "check:login-lockout": "dotenv -e ../.env -- tsx scripts/check-login-lockout.ts",
+    "check:storage-targets": "dotenv -e ../.env -- tsx scripts/check-storage-targets.ts",
+    "check:upload-content": "dotenv -e ../.env -- tsx scripts/check-upload-content.ts",
+    "check:vault-owner": "dotenv -e ../.env -- tsx scripts/check-vault-owner.ts",
+    "check:performance": "dotenv -e ../.env -- tsx scripts/check-performance.ts",
+    "check:retention": "dotenv -e ../.env -- tsx scripts/check-retention.ts",
+    "check:legal-hold": "dotenv -e ../.env -- tsx scripts/check-legal-hold.ts",
+    "check:filters": "dotenv -e ../.env -- tsx scripts/check-filters.ts",
+    "check:rename": "tsx scripts/check-rename.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -49,7 +68,7 @@
     "pdf-parse": "^2.4.5",
     "prisma": "^6.19.3",
     "tesseract.js": "^7.0.0",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",

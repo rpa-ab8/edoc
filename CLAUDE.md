@@ -1,7 +1,7 @@
 # DMS Project — Instructions for Claude Code
 
 ## What this is
-Universal, multi-sector Document Management System. Multi-organization architecture, single organization in production for now. Full design is in `docs/` — read the relevant doc before implementing a feature, don't guess from this file alone.
+**Edoc** — the user-facing product name since PRD v1.2 (formerly "DMS"; internal identifiers such as the repo folder, `docs/DMS_*.md` file names and the `dms` database/compose names are unchanged). Universal, multi-sector document management system. Multi-organization architecture, single organization in production for now. Full design is in `docs/` — read the relevant doc before implementing a feature, don't guess from this file alone.
 
 ## Read before working on...
 - **Any feature's behaviour or screens** → `docs/DMS_Feature_and_Flow_Specification.md`
@@ -28,10 +28,12 @@ Universal, multi-sector Document Management System. Multi-organization architect
 - **Folder permission overrides can only restrict, never grant** beyond what the role allows.
 - **Confidential folders**: named-user access only (no role inheritance), excluded from all search/listings/counts for non-members, Super Admin excluded, enforced at the query layer not just the UI.
 - **Audit records are append-only.** No update or delete path, for anyone, ever.
+- **A document's Upload Date (`document.uploadedAt`) is immutable** — it is the auto-delete clock (RET-2). A DB trigger refuses changes; never write it after insert.
+- **A Legal Hold blocks every destruction path** — user delete, auto-delete, single purge, "Empty trash", the automatic trash purge. All of them go through `moveDocumentToTrash` / `destroyTrashedDocument` in `document.service.ts`; never add a deletion path that bypasses them.
 - **Storage access only through the abstraction layer.** Never call a storage SDK (S3/R2 client, filesystem path) directly from feature code — always through the interface, so backends stay swappable.
 
 ## Current build phase
-Release 1 only. Do not build Release 2 items (workflow/approvals, retention automation, notifications, auto-extraction, reporting) unless explicitly asked — but don't actively break the reserved columns/fields the data model sets aside for them (e.g. `document.workflow_state`).
+Release 1 only, as amended by PRD v1.2 (which brought the per-department auto-delete period, the daily retention run, Legal Hold and the standard Upload Date filter into R1 — see PRD §8.14). Do not build Release 2 items (workflow/approvals, retention locks / per-document-type retention / auto-archive / expiry reminders, notifications, auto-extraction, reporting) unless explicitly asked — but don't actively break the reserved columns/fields the data model sets aside for them (e.g. `document.workflow_state`).
 
 ## Working conventions
 - Follow the data model's entity/field names exactly when naming tables, columns and types.

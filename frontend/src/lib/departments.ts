@@ -112,6 +112,8 @@ export interface DepartmentDetail {
   identifierTerm: string | null;
   subfolderDepthLimit: number | null;
   rules: DepartmentRules;
+  /** Auto-delete period in years (RET-1); null = off. Read-only here — set on the Retention tab. */
+  autoDeleteYears: number | null;
   status: "active" | "archived";
   createdAt: string;
   documentTypes: (DraftDocumentType & { id: string })[];

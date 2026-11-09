@@ -6,6 +6,7 @@
  * Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -119,7 +120,7 @@ try {
   console.error("TEST ERROR:", err);
   fail++;
 } finally {
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.membership.deleteMany({ where: { departmentId: dept.id } });
   await prisma.role.deleteMany({ where: { departmentId: dept.id } });
   await prisma.department.deleteMany({ where: { id: dept.id } });

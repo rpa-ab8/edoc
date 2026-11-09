@@ -105,9 +105,14 @@ async function externalLinkBlob(token: string, download: boolean): Promise<Blob>
   return res.blob();
 }
 
-export async function fetchExternalLinkPreview(token: string): Promise<{ url: string; mimeType: string }> {
+export async function fetchExternalLinkPreview(
+  token: string,
+): Promise<{ url: string; mimeType: string; text: string | null }> {
   const blob = await externalLinkBlob(token, false);
-  return { url: URL.createObjectURL(blob), mimeType: blob.type };
+  // Text files are served with "; charset=utf-8" — compare on the bare type.
+  const mimeType = (blob.type.split(";")[0] ?? "").trim().toLowerCase();
+  const text = mimeType.startsWith("text/") ? await blob.text() : null;
+  return { url: URL.createObjectURL(blob), mimeType, text };
 }
 
 export async function downloadExternalLinkFile(token: string, fileName: string) {

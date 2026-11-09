@@ -7,6 +7,7 @@
  * storage. Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -173,7 +174,7 @@ try {
 } finally {
   await prisma.confidentialRecovery.deleteMany({ where: { folder: { departmentId: dept.id } } });
   await prisma.confidentialMember.deleteMany({ where: { folder: { departmentId: dept.id } } });
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.folder.deleteMany({ where: { departmentId: dept.id } });
   await prisma.membership.deleteMany({ where: { departmentId: dept.id } });
   await prisma.role.deleteMany({ where: { departmentId: dept.id } });

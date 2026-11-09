@@ -1,8 +1,20 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { addDays, isIsoDate, startOfLocalDate } from "../../lib/calendar.js";
+import { loadHoldIndex } from "../../lib/legal-hold.js";
 import {
   unviewableFolderIdsToExclude,
   type PermissionActor,
 } from "../../lib/effective-permissions.js";
+
+export class SearchError extends Error {
+  constructor(
+    public statusCode: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 interface Deps {
   prisma: PrismaClient;
@@ -27,6 +39,9 @@ export interface SearchParams {
   documentTypeId?: string;
   quickView?: QuickView;
   filters?: SearchFilter[];
+  /** Standard Upload Date filter (SRCH-6): YYYY-MM-DD, inclusive, in the organization's time zone. */
+  uploadedFrom?: string;
+  uploadedTo?: string;
   limit?: number;
 }
 
@@ -40,7 +55,21 @@ export interface SearchResult {
   fileName: string | null;
   fileSize: number | null;
   mimeType: string | null;
+  uploadedAt: Date;
   updatedAt: Date;
+  legalHold: boolean;
+}
+
+/**
+ * Validates the standard Upload Date filter (SRCH-6): either bound may be given alone; both are real
+ * calendar dates; From may not fall after To. Exported so the route and the service agree.
+ */
+export function validateUploadDateRange(from?: string, to?: string) {
+  if (from && !isIsoDate(from)) throw new SearchError(400, "invalid_date", "The Upload Date \"From\" isn't a valid date.");
+  if (to && !isIsoDate(to)) throw new SearchError(400, "invalid_date", "The Upload Date \"To\" isn't a valid date.");
+  if (from && to && from > to) {
+    throw new SearchError(400, "invalid_date_range", "The Upload Date \"From\" can't be after \"To\".");
+  }
 }
 
 /**
@@ -108,6 +137,7 @@ export async function searchDocuments(
   params: SearchParams,
 ): Promise<SearchResult[]> {
   const { prisma } = deps;
+  validateUploadDateRange(params.uploadedFrom, params.uploadedTo);
 
   // Sharing (Module 9) and Trash (Module 11) don't exist yet — their quick views are honest empties.
   if (params.quickView === "shared_with_me" || params.quickView === "trash") return [];
@@ -126,6 +156,23 @@ export async function searchDocuments(
   }
   if (params.documentTypeId) {
     conditions.push(Prisma.sql`d."documentTypeId" = ${params.documentTypeId}`);
+  }
+  // Upload Date (SRCH-6): both bounds inclusive whole days on the organization's calendar, so the
+  // range is [start of From, start of the day after To) as instants. `uploadedAt` is stored as UTC
+  // without a zone (Prisma's DateTime), hence the explicit conversion of each bound.
+  if (params.uploadedFrom || params.uploadedTo) {
+    // An unknown organization matches no documents anyway (every condition carries it); the
+    // fallback only keeps the date arithmetic well-defined.
+    const org = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { timeZone: true } });
+    const timeZone = org?.timeZone ?? "Asia/Kolkata";
+    if (params.uploadedFrom) {
+      const start = startOfLocalDate(params.uploadedFrom, timeZone).toISOString();
+      conditions.push(Prisma.sql`d."uploadedAt" >= (${start}::timestamptz AT TIME ZONE 'UTC')`);
+    }
+    if (params.uploadedTo) {
+      const end = startOfLocalDate(addDays(params.uploadedTo, 1), timeZone).toISOString();
+      conditions.push(Prisma.sql`d."uploadedAt" < (${end}::timestamptz AT TIME ZONE 'UTC')`);
+    }
   }
   if (params.quickView === "uploaded_by_me") {
     conditions.push(
@@ -178,6 +225,7 @@ export async function searchDocuments(
     },
   });
   const byId = new Map(docs.map((d) => [d.id, d]));
+  const holds = await loadHoldIndex(prisma, actor.organizationId, params.departmentId);
 
   return ids
     .map((id) => byId.get(id))
@@ -192,6 +240,8 @@ export async function searchDocuments(
       fileName: d.currentVersion?.fileName ?? null,
       fileSize: d.currentVersion?.fileSize ?? null,
       mimeType: d.currentVersion?.mimeType ?? null,
+      uploadedAt: d.uploadedAt,
       updatedAt: d.updatedAt,
+      legalHold: holds.isHeld(d),
     }));
 }

@@ -9,6 +9,7 @@ import {
   FolderIcon,
   GearIcon,
   GridIcon,
+  HoldIcon,
   LockIcon,
   PlusIcon,
   UsersIcon,
@@ -109,6 +110,11 @@ export function WorkspaceShell({
             {folder.isConfidential && (
               <span title="Confidential — named members only" className="shrink-0 text-accent">
                 <LockIcon size={13} />
+              </span>
+            )}
+            {folder.legalHold === "held" && (
+              <span title="Legal Hold — nothing in this folder can be deleted" className="shrink-0 text-warning-tint">
+                <HoldIcon size={13} />
               </span>
             )}
           </Link>

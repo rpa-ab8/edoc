@@ -105,6 +105,19 @@ export const PERMISSION_CATALOGUE: PermissionGroup[] = [
     ],
   },
   {
+    // PRD v1.2 RET-1..8. Department Admin rights: the department template's Department Admin role
+    // carries them (it gets every active key) and the migration granted them to every existing
+    // Department-Admin-capable role. No other template role gets them, and the Super Admin's
+    // administrative baseline deliberately does not include them.
+    key: "retention",
+    label: "Retention",
+    permissions: [
+      { key: "retention.manage_auto_delete", label: "Manage auto-delete period" },
+      { key: "retention.manage_legal_hold", label: "Place and remove legal holds" },
+      { key: "retention.view_upcoming_deletions", label: "View upcoming deletions" },
+    ],
+  },
+  {
     key: "reports",
     label: "Reports",
     permissions: [
@@ -146,6 +159,9 @@ export const PERMISSION_DEPENDENCIES: Record<PermissionKey, PermissionKey[]> = {
   "workflow.approve": ["documents.view"],
   "workflow.reject": ["documents.view"],
   "workflow.request_changes": ["documents.view"],
+  // Both act on documents the holder must be able to see.
+  "retention.manage_legal_hold": ["documents.view"],
+  "retention.view_upcoming_deletions": ["documents.view"],
 };
 
 // A role counts as Department-Admin-capable when it can both manage the department's members

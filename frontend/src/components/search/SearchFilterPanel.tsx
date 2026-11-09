@@ -1,4 +1,5 @@
 import { inputBase } from "../AuthCard";
+import { DateRangePicker } from "../DateRangePicker";
 import { Select } from "../Select";
 import { XIcon } from "../icons";
 import type { DraftDocumentType, DraftField } from "../../lib/departments";
@@ -11,6 +12,10 @@ type DocType = DraftDocumentType & { id: string };
  * fields belong to a type, so choosing a type reveals its filterable fields, each rendered with the
  * control its `field_type` dictates: text/ID → contains, dropdown → multi-select, date → range,
  * number → range. Filters stack and combine with the text search.
+ *
+ * Two standard filters lead every department's panel with no admin setup (SRCH-6): Document Type
+ * and Upload Date (From – To, both inclusive, read on the organization's calendar by the server).
+ * They AND with each other, with the field filters and with the search text.
  */
 export function SearchFilterPanel({
   documentTypes,
@@ -18,6 +23,11 @@ export function SearchFilterPanel({
   onDocumentTypeChange,
   filters,
   onFiltersChange,
+  uploadedFrom,
+  uploadedTo,
+  onUploadedChange,
+  dateRangeError,
+  onClearAll,
   onClose,
 }: {
   documentTypes: DocType[];
@@ -25,6 +35,11 @@ export function SearchFilterPanel({
   onDocumentTypeChange: (id: string) => void;
   filters: SearchFilter[];
   onFiltersChange: (filters: SearchFilter[]) => void;
+  uploadedFrom: string;
+  uploadedTo: string;
+  onUploadedChange: (from: string, to: string) => void;
+  dateRangeError: string | null;
+  onClearAll: () => void;
   onClose: () => void;
 }) {
   const type = documentTypes.find((t) => t.id === documentTypeId);
@@ -41,10 +56,10 @@ export function SearchFilterPanel({
       <div className="flex items-center justify-between">
         <h3 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-subtle">Filters</h3>
         <div className="flex items-center gap-3">
-          {(filters.length > 0 || documentTypeId) && (
+          {(filters.length > 0 || documentTypeId || uploadedFrom || uploadedTo) && (
             <button
               type="button"
-              onClick={() => onDocumentTypeChange("")}
+              onClick={onClearAll}
               className="text-[13px] font-medium text-primary hover:underline"
             >
               Clear all
@@ -76,15 +91,39 @@ export function SearchFilterPanel({
           />
         </div>
 
-        {filterable.map((field) => (
-          <FieldFilter
-            key={field.id}
-            field={field}
-            current={filterFor(field.id!)}
-            onChange={(next) => setFilter(field.id!, next)}
+        <div>
+          <label className="mb-1.5 block text-[12.5px] font-medium text-ink">Upload date</label>
+          <DateRangePicker
+            from={uploadedFrom}
+            to={uploadedTo}
+            onChange={onUploadedChange}
+            presets
+            invalid={Boolean(dateRangeError)}
+            label="Upload date"
+            className="w-full"
           />
-        ))}
+          {dateRangeError ? (
+            <p role="alert" className="mt-1.5 text-[12.5px] font-medium text-danger">
+              {dateRangeError}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[12px] text-subtle">Either date alone works. Both days are included.</p>
+          )}
+        </div>
       </div>
+
+      {filterable.length > 0 && (
+        <div className="mt-5 grid gap-4 border-t border-line-muted pt-5 sm:grid-cols-2 lg:grid-cols-3">
+          {filterable.map((field) => (
+            <FieldFilter
+              key={field.id}
+              field={field}
+              current={filterFor(field.id!)}
+              onChange={(next) => setFilter(field.id!, next)}
+            />
+          ))}
+        </div>
+      )}
 
       {documentTypeId && filterable.length === 0 && (
         <p className="mt-3 text-[13px] text-subtle">This document type has no filterable fields.</p>
@@ -142,19 +181,32 @@ function FieldFilter({
 
   if (field.fieldType === "date" || field.fieldType === "number") {
     const op = field.fieldType === "date" ? "date_range" : "number_range";
-    const type = field.fieldType === "date" ? "date" : "number";
-    const set = (part: "from" | "to", v: string) => {
-      const from = part === "from" ? v : (current?.from ?? "");
-      const to = part === "to" ? v : (current?.to ?? "");
+    const setRange = (from: string, to: string) =>
       onChange(from || to ? { fieldDefId: id, op, from: from || undefined, to: to || undefined } : null);
-    };
+    const set = (part: "from" | "to", v: string) =>
+      setRange(part === "from" ? v : (current?.from ?? ""), part === "to" ? v : (current?.to ?? ""));
+
+    if (field.fieldType === "date") {
+      return (
+        <div>
+          {label}
+          <DateRangePicker
+            from={current?.from ?? ""}
+            to={current?.to ?? ""}
+            onChange={setRange}
+            label={field.label}
+            className="w-full"
+          />
+        </div>
+      );
+    }
     return (
       <div>
         {label}
         <div className="flex items-center gap-2">
-          <input type={type} aria-label={`${field.label} from`} className={input} value={current?.from ?? ""} onChange={(e) => set("from", e.target.value)} />
+          <input type="number" aria-label={`${field.label} from`} className={input} value={current?.from ?? ""} onChange={(e) => set("from", e.target.value)} />
           <span className="text-subtle">–</span>
-          <input type={type} aria-label={`${field.label} to`} className={input} value={current?.to ?? ""} onChange={(e) => set("to", e.target.value)} />
+          <input type="number" aria-label={`${field.label} to`} className={input} value={current?.to ?? ""} onChange={(e) => set("to", e.target.value)} />
         </div>
       </div>
     );

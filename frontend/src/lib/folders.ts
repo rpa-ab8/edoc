@@ -9,6 +9,10 @@ export interface FolderNode {
   isConfidential: boolean;
   subfolderCount: number;
   documentCount: number;
+  /** RET-5: "held" = this folder carries a Legal Hold; "inherited" = a folder above it does. */
+  legalHold: "held" | "inherited" | null;
+  /** The hold placed on this folder itself, when there is one. */
+  legalHoldId: string | null;
 }
 
 export interface MyPermissions {
@@ -19,6 +23,8 @@ export interface MyPermissions {
   subfolderDepthLimit: number;
   /** The caller's role name in this department, or null (e.g. a Super Admin with no membership). */
   roleName: string | null;
+  /** May place/remove a Legal Hold on this folder — the Department Admin right, or a vault's Owner. */
+  canManageLegalHold: boolean;
 }
 
 export const fetchFolders = (departmentId: string) =>

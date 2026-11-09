@@ -2597,3 +2597,237 @@ Department Admin must), the ID prefix *is* editable (affects new documents only)
 "Move a folder" and "Invite people", and refreshed the who-can-do-what table.
 
 Gap 3 (non-member Super Admin can't reach a department's Audit log / Recovery) is still open.
+
+## 2026-10-30 — PRD v1.2: Edoc rename, auto-delete, daily retention run, Legal Hold, standard filters
+
+Implemented the v1.2 change brief (Changes 1–8). Retention automation was Release 2; this brief
+brings a narrow slice of it into R1 on the user's explicit instruction — PRD §8.14 (RET-1..8),
+SRCH-6 and the amended TRSH-4 were added to the docs, and CLAUDE.md's build-phase line updated.
+
+**Decisions the user made in this session (2026-10-30):**
+1. **No automatic trash purge existed** (the 30-day countdown was display-only). Built one: the
+   daily run permanently removes **every** trash item older than 30 days — user-deleted or
+   auto-deleted — skipping Legal Holds. Matches Feature Spec "truly gone when the window lapses".
+2. **System actor:** `audit_event.actor_user_id` is now nullable with a new `actor_type`
+   (user | system); a check constraint ties the two. No fake "System" user account.
+3. **Organization time zone:** new `organization.time_zone` (default Asia/Kolkata), editable by the
+   Super Admin in Organization settings. Drives the Upload Date filter and the run's "today".
+4. **Existing confidential-audit leak fixed:** download / delete / restore / purge / metadata edit /
+   new version of confidential documents were logged `is_confidential = false` and showed in the
+   ordinary audit view (CNF-5/AUD-5). `logAuditEvent` now derives the flag from the document's folder
+   whenever an event names a document. Existing rows untouched (append-only).
+
+**Decisions made here (flagged in the hand-off):** 29 Feb uploads are due on **1 Mar** in common
+years (never early); the Upcoming Deletions list **shows held documents, marked**; Super Admin is
+refused the new rights (not in its administrative baseline); in a confidential folder, holds *and*
+restoring an auto-deleted document are the **Owner's** (on any confidential ancestor); a hold blocks
+destruction only (view/edit/new version/restore still work); a folder with an active hold can't be
+deleted, and a folder covered by an ancestor's hold can't be moved outside it; a parent-folder hold
+also covers confidential subfolders (without revealing them); archived departments are still
+processed; hold **reasons** are shown only to people who may manage holds (others see the badge);
+the preview count includes confidential documents (a count reveals no contents, and a destructive
+confirmation must not under-report); manual purge keeps its existing `delete` audit action, the
+automatic purge writes the new `purge` action.
+
+**Schema — migration `20261030054602_retention_legal_hold`** (+ `down.sql` beside it):
+`organization.timeZone`; `department.autoDeleteYears` (1–100, null = off); `document.uploadedAt`
+(backfilled from the earliest version, immutable via trigger `document_uploaded_at_immutable`),
+`trashSource`, `trashReason`, index `(departmentId, status, uploadedAt)`; new `legal_hold` table
+(one-target / complete-removal / non-blank-reason checks, one active hold per target, FKs RESTRICT);
+`audit_event.actorType` + nullable actor (FK stays RESTRICT); five new `AuditAction` values; the three
+retention keys granted to the 5 existing Department-Admin-capable roles. Rollback is partial by
+design: enum values can't be dropped, and `down.sql` refuses to run once a system audit row exists.
+
+**Backend:** `lib/calendar.ts` (zone-aware dates, leap rule, next run), `lib/legal-hold.ts` (coverage,
+hold index, authority), `lib/audit.ts` (SYSTEM_ACTOR, derived confidentiality), new
+`modules/retention` (setting + preview/confirm, upcoming list, holds, `runAutoDelete`,
+`runTrashPurge`), `worker/retention.worker.ts` (BullMQ job scheduler at RETENTION_JOB_TIME /
+RETENTION_JOB_TIME_ZONE; `--once`). `document.service.ts`: one soft-delete path
+(`moveDocumentToTrash`) and one destruction path (`destroyTrashedDocument`) shared by people and
+the job, both refusing held documents; restore of an auto-deleted document needs hold authority and
+places a "Restored after auto-delete" hold; `createDocument` stamps document + v1 with one instant.
+Search: inclusive Upload Date From/To in the org's zone, `invalid_date_range`. Folders: hold state in
+the listing, `canManageLegalHold` in my-permissions, delete/move guards. Permissions: new
+"Retention" group (manage_auto_delete, manage_legal_hold, view_upcoming_deletions).
+Compose: new `retention-worker` service. Env: RETENTION_JOB_TIME, RETENTION_JOB_TIME_ZONE.
+
+**Frontend:** Department settings → **Retention** tab (auto-delete with a red preview-and-confirm
+dialog, Upcoming deletions with "Place hold", Legal holds with "Lift"); `LegalHold.tsx` (badge +
+reason dialog); viewer hold panel (Delete hidden while held, Upload Date shown); folder header
+"Place Legal Hold"/"Lift hold" + badge, rail hold icon, held rows hide Delete; Trash shows reason,
+System as deleter, hold badge, "Hold" action, restore gated; filter panel's always-on Upload Date
+range with inline validation; audit viewer "System" actor + new action labels; Organization settings
+time zone. Product name: page title, emails, env sender default → **Edoc**.
+
+**Tests** — new: `check:retention` 105, `check:legal-hold` 67, `check:filters` 19, `check:rename` 137
+(no DB) — fixtures in `scripts/_retention-fixtures.ts` build throwaway orgs and scope every run to them.
+Regression, before → after, all green: permissions 30→30, folders 31→31, documents 40→40, upload
+17→17, search 24→24, viewer 12→12, sharing 39→39, confidential 29→29, trash 19→19, audit 15→15,
+tenant-isolation 69→69, access-matrix 88→88, performance 10 + 2 skipped → same. Lint, both
+typechecks and the frontend build clean. `retention:run-once` and the scheduler checked live
+(next fire 31 Oct 02:00 IST).
+
+**Browser-verified (Dept Admin, Abate HR):** Retention tab, preview dialog (cancelled — nothing
+saved), Upload Date filter + From-after-To message, folder hold dialog's required reason (cancelled),
+viewer Upload Date + "Place Legal Hold". Fixed on the way: the confirm button lost its red to
+`bg-primary` (same-specificity utilities); a false "No matches" under an invalid date range. Not
+clicked through on real data (to avoid permanent audit rows): actually placing/lifting a hold,
+saving a period, the trash hold action — all covered by the suites.
+
+**Left unchanged — review later:** internal "DMS" identifiers (repo folder, `docs/DMS_*.md` names,
+`dms`/`dms-prod` compose, DB and volume names, `dms-backend`/`dms-web` images, `.dms-test-*` NAS
+probe file, `dms:currentOrganizationId` storage key, `C:/apps/DMS/.env` in test scripts, CLAUDE.md's
+"# DMS Project" title, historical text in this log and the roadmap). Pre-existing, not fixed:
+`text-accent` (rail lock icon) is not a defined colour token; TrashList's "Delete forever" confirm
+uses `primaryButtonBase` + `bg-danger`, the same conflict fixed above. Audit immutability is still
+enforced in the application, not by DB grants/trigger (test teardown deletes audit rows) — consider
+DB-level grants for production.
+
+## 2026-11-04 — Custom date-range picker replaces the browser's calendar in filters
+
+**Why:** the Upload Date filter (and the audit log's From/To) used native `<input type="date">`.
+Its popup is drawn by the browser — system font, system blue, different in every browser, one end
+of the range at a time — so it read as "old, not premium" next to the rest of the UI. Same problem
+`Select` solved for dropdowns.
+
+**New — `frontend/src/components/DateRangePicker.tsx`:** one field with Start → End halves (click
+either to edit that end) and a clear ×; popover (portal, flips above/clamps on screen like `Select`)
+with a month grid that draws the span as an emerald band, hover preview of the end being chosen,
+today dot, faint adjacent-month days, month and year pickers (click the title), optional
+**Quick ranges** column (Today, Yesterday, Last 7/30 days, This/Last month, This/Last year — chips
+on phones), and a footer with the range summary, day count, Clear and Done. Keyboard: arrows,
+Home/End, PageUp/PageDown (Shift = year), Enter picks, Esc closes and refocuses. Week start follows
+the browser locale (Monday fallback). Values are unchanged — inclusive `YYYY-MM-DD`, "" for an open
+end, either end may stay open — built from local Y/M/D so no zone shift. Picking a start after the
+end clears the end; picking an end before the start restarts the range there.
+`icons.tsx`: new `ArrowRightIcon`.
+
+**Used in:** filter panel Upload date (with presets; now one column beside Document type), filter
+panel date-field filters (`date_range`, no presets — number ranges keep their inputs), Audit log
+Date (with presets, spans the old From + To columns).
+
+**Verified in the browser (Dept Admin, Abate HR):** range pick + hover preview → URL
+`from/to` updated; reopen shows committed band; month/year views; "Last 30 days" and "Last month"
+presets; keyboard pick + Esc; invalid From > To shows the red field and message; audit "Last month"
+narrowed to 11 October events. Build, lint, typecheck clean. Not clicked live: a date-type field
+filter (no filterable date field on the HR types used) and phone width.
+
+**Noticed, not changed:** `MetadataFields.tsx` (upload / edit metadata) still uses the native date
+input. AuditPage builds `from` with `new Date("YYYY-MM-DD")` (UTC midnight), so in IST events from
+00:00–05:30 on the From day are excluded — pre-existing; flagged, not fixed.
+Vite's watcher missed one rapid edit on Windows and served a stale module ("DateRangePicker is not
+defined") until the file was touched — a dev-server quirk, not a code issue.
+
+## 2026-11-07 — Claude Design wireframe prompt
+- Added docs/Claude_Design_Wireframe_Prompt.md: a 12-flow prompt (screens, actions, states, permissions) for generating presentation wireframes. No code changes.
+
+## 2026-11-07 — Security audit, step 1 (access control & tenant isolation)
+- Added SECURITY_AUDIT.md: code-review of all routes/services, permission engine, auth, sharing, storage, uploads, deps. 4 High, 8 Medium, 10 Low findings; none fixed yet. No code changes. Findings confirmed by code reading only (app/DB not running); reproduction recipes included.
+
+## 2026-11-07 — Security fix H-1: department ↔ folder binding (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 17 failing checks before the fix):** routes resolved permission for the department in the URL but services acted on the folder id alone. An Admin of dept A could, under A's URL, list / upload into / rename / move / delete dept B's folders, read B's role matrix, and set or clear overrides on B's roles.
+- **Fix:** `lib/effective-permissions.ts` — a folder whose chain belongs to a different department than the one being resolved grants nothing. Defence in depth: `folder.service.ts` (`loadFolder`, `folderPath`, rename/move/delete, list/set/clear overrides), `document.service.ts listFolderDocuments`, `upload.service.ts uploadDocument` now bind the folder to the URL's department (404 `folder_not_found`). Routes pass `departmentId` through.
+- **Test:** new `npm run check:department-binding` (HTTP-level via `app.inject`, 29 checks incl. positive controls). Full suite 16/16 green (633 checks), tsc + lint clean.
+
+## 2026-11-07 — Security fix H-2: share & history exposure (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 17 failing checks before the fix):** `GET /documents/:id` returned the home folder / department / document-type / field-definition ids to a view-only share recipient, plus every version (uploader e-mails, change notes) and the activity feed to anyone with `documents.view`. Only the UI hid them. `/activity` needed only `documents.view`; `/file?versionId=` served any old version.
+- **Fix (`document.service.ts`):** new `loadDocumentAccess` returns the permission map with the document; `shapeDocument(doc, view)` shapes the response to it. Share-only callers get those ids as null. Without `documents.version_history`, callers get the current version only (no uploader or change note) and an empty activity feed. The same shaping applies to the edit / new-version / restore responses. `/activity` now requires `documents.version_history`; an older version's file needs it too (otherwise 404 `version_not_found`).
+- **Frontend:** `DocumentDetail` ids are nullable. In the viewer, Back falls back to `/`, field keys fall back to the label, and ShareDialog needs `departmentId`. `NeedsDetailsPanel` skips null field ids.
+- **Test:** new `npm run check:share-exposure` (HTTP-level, 42 checks incl. positive controls; fails 17 on the old behaviour). `check:upload` now counts versions in the DB, because its role lacks version history. Full suite 19/19 green (688 checks); tsc + lint clean on both sides.
+
+## 2026-11-07 — Security fix H-3: role-editing escalation (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 16 failing checks before the fix):** `createRole` / `copyRole` / `updateRole` / `deleteRole` required only `members.change_role`. A delegated HR manager could give their own role every permission (becoming a Department Admin), create or copy super-roles, and strip, rename or delete roles above them.
+- **Fix (`department.service.ts`):** new `assertRoleWithinReach` (built on `canGrantRole`; the Super Admin is exempt) returns 403 `role_exceeds_yours`. It applies to: create (the new map, after dependency closure), copy (the source role), update (both the current and the new map, so nothing above you can be changed and nothing can be raised beyond you), and delete (the role being deleted). An unchanged re-save is allowed, because the roles page PUTs every role. No frontend change; the error message shows on the roles page.
+- **Test:** new `npm run check:role-escalation` (HTTP-level, 24 checks with DB verification and positive controls). Full suite 20/20 green (712 checks); tsc + lint clean. M-7 (demoting or removing *members* above you) is still open.
+
+## 2026-11-07 — Security fix M-7: can't act on members above you (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 7 failing checks):** `changeMemberRole` / `removeMember` checked only the new role and the last-admin guard. An HR manager with `members.change_role` / `members.remove` demoted and removed Department Admins while another admin remained.
+- **Fix (`department.service.ts`):** new `assertMemberWithinReach` (built on `canGrantRole`; the Super Admin is exempt) refuses with 403 `member_above_you` when the target's current role holds anything the actor lacks. Peers and self are still allowed. Org-level enable/disable is Super-Admin-only and unchanged.
+- **Test:** new `npm run check:member-hierarchy` (16 checks incl. controls and the last-admin guard). Full suite 21/21 green (728 checks); tsc + lint clean.
+
+## 2026-11-07 — Security fix H-4: external links re-checked on every open (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 30 failing checks across 7 scenarios):** `resolveLink` checked only token, status and expiry. Links kept serving the file after the document was trashed, after its folder or an ancestor became confidential, after the sharer was disabled (membership or account) or lost the link permissions, and after the department turned links off. Download links kept downloading after the sharer lost download.
+- **Fix (`sharing.service.ts resolveLink`):** on every open and file fetch it re-checks that the document is active, the sharer's account is active, the permission engine still grants the sharer view + share + create_link + external_share for the document's current folder (this covers confidential and lost access), and the department still allows links. A failure gives the uniform `link_unavailable` 404 and is not counted or logged. The link is suspended, not revoked, so reversing the condition restores it. A download link drops to view-only if the sharer lost download.
+- **Test:** new `npm run check:link-revalidation` (48 checks; each scenario proves the link works, dies on both endpoints, then works again). Full suite 22/22 green (776 checks); tsc + lint clean. Not done: link password (product decision), L-2.
+
+## 2026-11-07 — Security fix M-1 (part 1): audit trail append-only in the database (SECURITY_AUDIT.md)
+- **Bug (confirmed: 11/11 tampering probes succeeded before the fix):** nothing in Postgres stopped UPDATE / DELETE / TRUNCATE of `audit_event`; append-only was a code convention only.
+- **Fix:** migration `20261107120000_audit_append_only` (+ `down.sql`) adds triggers that refuse every UPDATE, DELETE and TRUNCATE. Two exceptions: the FK `ON DELETE SET NULL` (an update that changes only `documentId` to NULL), and test cleanup. Cleanup needs both a database-level mark (`dms.audit_purge_allowed`, read from `pg_db_role_setting`; session SET can't fake it) and a per-transaction opt-in. Production is never marked.
+- New `npm run db:mark-disposable` (refuses NODE_ENV=production and non-local hosts); dev DB `dms` is marked. All 19 test scripts' cleanup now goes through `scripts/_audit-purge.ts`. CI marks its throwaway DB and runs the new suite. README notes the one-time step.
+- **Test:** new `npm run check:audit-immutability` (18 checks; every probe runs in a rolled-back transaction, so it is safe even without the trigger). Full suite 23/23 green (794 checks), no leftover fixtures; tsc + lint clean.
+- **Still open (part 2):** run app/worker as a DB role with only INSERT, SELECT on audit_event and no DDL. That's a deployment change (compose, secrets, deploy guide).
+
+## 2026-11-07 — Security fix M-2: sessions follow account / membership state at once (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 9 failing checks):** within the 15-min access-token life, a user disabled in the org still opened documents shared with them, their confidential vault and "Shared with me". A disabled account (`user.status`) kept working and kept refreshing (30-day refresh token). A stale `isSuperAdmin` claim was honoured.
+- **Fix:** `plugins/authenticate.ts` re-checks on every request that the account is active (401 `account_disabled`) and that the user still owns or actively belongs to the token's org (401 `session_revoked`), and re-derives `isSuperAdmin` from the DB. `auth.service.ts refresh` refuses a disabled account and revokes all its refresh tokens. The frontend's existing 401 → refresh flow handles both codes.
+- **Test:** new `npm run check:session-revocation` (HTTP-level, 17 checks incl. re-enable controls). Full suite 24/24 green (811 checks; `check:legal-hold` had one flaky timestamp-window failure, Docker vs host clock, passed 3/3 on rerun; not related). tsc + lint clean.
+
+## 2026-11-07 — Security fix M-3: login lockout can no longer lock out the owner (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 4 failing checks):** failures were counted per email, so 5 wrong passwords from any IP locked the account everywhere for 15 minutes, which an attacker could repeat indefinitely.
+- **Fix (`auth.service.ts login`):** 5 failures lock the (email, IP) pair only. A per-account counter (`LOGIN_MAX_ATTEMPTS_PER_ACCOUNT`, default 50 per window) handles distributed guessing: once past it, only IPs with a successful login for that account in the last `LOGIN_TRUSTED_IP_DAYS` (30) may try. A success clears only that IP's counter. New env vars are in `env.ts` and both `.env` examples (with defaults, so no deploy change is required).
+- **Test:** new `npm run check:login-lockout` (HTTP-level, 9 checks). Residual: an attacker sharing the owner's IP (same office) can still lock that pair; a CAPTCHA or e-mail unlock is a product decision.
+- Full suite after M-3: 25/25 green (820 checks); tsc + lint clean.
+
+## 2026-11-07 — Security fix M-4: storage settings can't point the server anywhere (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 21 failing checks):** a NAS mount path could be any server directory (saved as "verified"; errors told existing paths from missing). An R2 endpoint could be any URL: the server really contacted localhost, the metadata address and example.com, and reported their answers. NAS keys with `../` wrote outside the mount.
+- **Fix:** new `modules/storage/storage.policy.ts`, enforced in `buildDriver` (save, re-test and every live use). NAS paths must resolve inside `STORAGE_NAS_ROOT` (required for NAS in production; unset in dev = any path). R2 must be `https://<account>.r2.cloudflarestorage.com` with no creds, port, path or query, or a host in `STORAGE_R2_ALLOWED_HOSTS`. The NAS driver refuses keys that escape the mount. New env vars are documented in both `.env` examples and the compose NAS comment. Existing dev configs (R2) unaffected.
+- **Test:** new `npm run check:storage-targets` (25 checks, no external network after the fix).
+- Full suite after M-4: 26/26 green (845 checks); tsc + lint clean.
+
+## 2026-11-07 — Security fix M-5 (part 1): uploads verified by content, concurrency capped (SECURITY_AUDIT.md)
+- **Bug (confirmed live, 21 failing checks):** a file was accepted when its declared MIME *or* extension matched, and the bytes were never checked. An HTML page, an executable and an SVG were stored as PDF/PNG (and later served inline as such). Uploads (held whole in memory, up to 120 MB) had no concurrency limit.
+- **Fix:** `lib/upload-formats.ts` `detectFormat` / `verifyUploadFormat` (magic bytes; OOXML by ZIP directory, no decompression). Content must be a real accepted format and agree with the claim (JPEG and PNG interchangeable). The stored MIME is the detected one; the new codes are `unrecognised_content` / `content_mismatch`. New `lib/upload-limiter.ts`: a slot per upload taken before the body is read (`MAX_CONCURRENT_UPLOADS` 8, `MAX_CONCURRENT_UPLOADS_PER_USER` 2), 429 `upload_busy` + Retry-After. Applied to both upload routes. The env examples document the knobs.
+- **Tests:** new `npm run check:upload-content` (29 checks incl. a slow-streamed upload proving the cap). New `scripts/_fixture-files.ts` (real minimal PDF/PNG/JPEG/DOCX/XLSX); check-upload / viewer / sharing / trash / performance fixtures switched to real files.
+- **Still open:** antivirus scanning, true streaming to storage, an OCR worker sandbox (infrastructure / larger refactor).
+- Full suite after M-5: 27/27 green (859 checks; check:performance needed its fixture import aliased - a local `pdfBytes` shadowed it); tsc + lint clean.
+
+## 2026-11-07 — Security fix M-6: only a confidential folder's owner manages its list (SECURITY_AUDIT.md)
+- **Decision (product owner, 2026-11-07):** owner-only. The docs were silent; now recorded in Feature Spec §11.1 and Data Model §6.
+- **Bug (confirmed live):** any member could add anyone in the org to a vault or remove other members.
+- **Fix:** `confidential.service.ts` `requireVaultOwner` on add/remove (403 `not_vault_owner` for members; non-members still get 404). `listMembers` returns `canManage`, and the removal audit names the removed user. Frontend `ConfidentialDialogs.tsx` shows Add/Remove only to the owner, with a read-only note for others.
+- **Test:** new `npm run check:vault-owner` (13 checks). check:confidential 29/29, tenant-isolation 69/69, access-matrix 88/88, folders 31/31; tsc + lint clean (both sides).
+
+## 2026-11-07 — Security fix M-8: vulnerable dependencies (SECURITY_AUDIT.md)
+- `zod` 3.24 → **4.6.7** (backend; a major upgrade, high advisory). No code changes beyond `ZodError.flatten()` → `z.flattenError()` in `app.ts` / `env.ts`. The validation-error response shape is verified unchanged.
+- `fast-uri` patched (3.1.9 / 4.2.3) via non-breaking `npm audit fix`.
+- `deepmerge-ts` (high) **accepted**: it's only inside the Prisma CLI's config loader (`prisma` → `@prisma/config`), unreachable from requests. The fix needs Prisma 7 (a major migration), to plan separately; add the CI `npm audit` gate with it.
+- Note: `npm audit fix --omit=dev` pruned dev deps from node_modules (tsc/eslint broke); restored with `npm install`. The lockfile was not affected.
+- Full suite 28/28 green (872 checks); tsc (backend + frontend) + lint clean.
+
+## 2026-11-07 — Documentation: API reference + developer guide
+- **New `docs/API_Reference.md`** (~800 lines), written from the route and service code: conventions, error shape, rate limits, the auth/guard chain, an index of all 103 endpoints (guards and permission), per-module request/response/behaviour, and a full error-code catalogue.
+- **New `docs/developer/`**, 11 files: README (index, reading order, hard rules) · 01 Architecture · 02 Getting started (setup, full env-var reference, scripts, first-org SQL) · 03 Database schema (every table/column, constraints, triggers, indexes, JSON shapes, search vector, migration history, isolation checklist) · 04 Security & permissions (sessions, catalogue with enforcement map, resolution algorithm, escalation rules, vaults, sharing access, audit status) · 05 Backend modules (every service/lib function, rules, audit actions) · 06 Workflows (sequence/state diagrams) · 07 Frontend · 08 Testing (all 28 suites, anatomy, rules) · 09 Deployment & operations · 10 Conventions, recipes, traps, known gaps.
+- Root `README.md` links both. `deploy/README.md` §5 (NAS) now includes the `STORAGE_NAS_ROOT` step required since M-4.
+- **Found while documenting (not changed):** `sharing.remove_share`, `search.advanced_search` and `configuration.edit_metadata_schema` are catalogued but never enforced. `clearFolderPermission` writes no audit event. `storage_config.usedBytes` isn't decremented on purge, and `quotaBytes` isn't enforced. `login_attempt` is never pruned. Expired shares are deleted lazily when share lists load. All are recorded in 10_Conventions_and_Extending.md.
+- Every relative link and anchor was validated (0 broken).
+
+## 2026-11-07 — Markdown (.md/.markdown) and plain-text (.txt) documents
+- **Product decision (owner, 2026-11-07):** accept Markdown and plain text. Markdown is shown **rendered and safe**. Recorded in Scope §(formats), PRD (Upload, Compatibility, R1 table) and Feature Spec §6.4.
+- **Backend:** `lib/upload-formats.ts` adds `text/markdown` (md, markdown) and `text/plain` (txt) with `ocr: "text"`. Within the text family the extension decides (`.md` sent as `text/plain` stays Markdown). `isPlainText` requires valid UTF-8, no control bytes, and not an HTML/SVG/XML page; a binary format renamed to a text extension is `content_mismatch` (a note that merely mentions `%PDF-` is still text). `upload.service.ts` stores the text as `ocrText` with `ocrStatus: done` at upload (`ocrFields`/`needsOcr`), so text docs are searchable immediately without the OCR worker; the worker also handles text. File responses (viewer and external link) send `charset=utf-8` for text and `X-Content-Type-Options: nosniff` (`contentTypeHeader`).
+- **Frontend:** new `MarkdownView` (react-markdown 10.1.0 + remark-gfm 4.0.1, pinned): `skipHtml`, default URL sanitising, images NOT auto-loaded (shown as links), external links `noopener noreferrer`, styled with app tokens. Lazy-loaded via `LazyMarkdownView` (its own 201 kB chunk). Viewer and external-link page preview Markdown rendered and `.txt` as plain text. Accepted-type lists centralised (`ACCEPTED_UPLOAD_ACCEPT`); Markdown gets an orange file icon.
+- **Tests:** `check:upload-content` +28 checks (57 total): 4 accepted variants, text stored at upload, found by search, served as UTF-8 + nosniff, 8 refusals (HTML/SVG pages, invalid UTF-8, control bytes, PNG/PDF/DOCX renamed). A server-side render check of `MarkdownView` confirmed script/iframe/handlers stripped, `javascript:`/`data:` links neutralised, images not loaded, and GFM tables/task lists working.
+- **Bug found and fixed:** `check:upload` had silently stopped after 3 of 18 checks since the M-5 fixture rename (a stale `docxBytes` reference threw, and the script had no `catch`, so it still exited 0). Fixed the reference and added a `catch` that records the error as a FAIL; 18/18 again. `check:rename` updated docs wording. Full suite 28/28 green.
+- **Not verified in a browser:** the Chrome extension disconnected, so the rendered look still needs a visual check.
+
+## 2026-11-09 — Fix: uploading to a different folder looked like it failed (HR)
+
+**Reported:** in Human Resources, starting an upload from "General" and choosing "main" as the
+destination (or the reverse) appeared not to upload.
+
+**Root cause:** the upload actually succeeded — confirmed via the API and in the browser (the file
+was filed into the chosen folder with a new document ID). But the dialog only showed the document
+ID, and closing it left the user in the folder they started from, so the new file never appeared on
+screen and it read as a failure. Backend, permissions and the folder picker were all correct.
+
+**Fix (frontend only):**
+- `components/upload/UploadPanel.tsx` — each filed row now says **"Filed in <folder>"**; the panel
+  remembers the folder the latest file landed in and passes it to `onClose(filedToFolderId)` from
+  every close path (Done/Cancel, ✕, backdrop).
+- `pages/DepartmentWorkspacePage.tsx` — on close, if files went to a folder other than the one open,
+  navigate to that folder so the new files are visible.
+
+**Verified:** `tsc --noEmit` clean; in the browser, from General → upload into main → row reads
+"Filed in main" → Done lands on the main folder with the new document listed.
+
+**Test data left behind:** HR-CON-2026-00005, -00007, -00008 (main) and -00006 (General, `a.pdf`)
+were created while reproducing — safe to move to Trash.

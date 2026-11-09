@@ -53,6 +53,14 @@ jobs:
       - name: Apply migrations to a fresh database
         run: npx prisma migrate deploy
         working-directory: backend
+      # audit_event is append-only in the database (SECURITY_AUDIT.md M-1); marking this throwaway
+      # database disposable lets the suites remove the audit events of their own fixtures.
+      - name: Mark the CI database disposable
+        run: npx tsx scripts/db-mark-disposable.ts
+        working-directory: backend
+      - name: Audit immutability suite
+        run: npx tsx scripts/check-audit-immutability.ts
+        working-directory: backend
       # The two suites that build their own fixtures. The rest expect the real "Abate" org (and
       # some its R2 storage), so they run against a dev database, not CI.
       - name: Tenant isolation suite

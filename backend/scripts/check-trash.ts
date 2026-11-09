@@ -8,6 +8,8 @@
  * DEV ONLY, writes to real storage. Point it at a development environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
+import { pdfBytes } from "./_fixture-files.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -100,7 +102,7 @@ const reader: PermissionActor = { userId: readerU.id, organizationId: org.id, is
 const folder = await prisma.folder.create({ data: { organizationId: org.id, departmentId: dept.id, name: "General", depth: 0 } });
 
 async function upload(tag: string) {
-  const bytes = Buffer.from(`zz trash ${tag} ${Date.now()} ${Math.random()}`);
+  const bytes = pdfBytes(`zz trash ${tag} ${Date.now()} ${Math.random()}`);
   const up = await uploads.uploadDocument(fileDeps, staff, {
     departmentId: dept.id, folderId: folder.id, documentTypeId: docType.id,
     fieldValues: [{ fieldDefId: docType.fields[0].id, value: `Doc ${tag}` }],
@@ -184,7 +186,7 @@ try {
   } catch (err) {
     console.error("[cleanup] storage issue:", err);
   }
-  await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+  await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
   await prisma.fieldValue.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.share.deleteMany({ where: { document: { departmentId: dept.id } } });
   await prisma.document.updateMany({ where: { departmentId: dept.id }, data: { currentVersionId: null } });

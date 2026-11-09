@@ -9,6 +9,7 @@
  * deletes all of it. Point it at a development database, never production.
  */
 import { PrismaClient } from "@prisma/client";
+import { purgeTestAuditEvents } from "./_audit-purge.js";
 import dotenv from "dotenv";
 
 dotenv.config({ path: "C:/apps/DMS/.env" });
@@ -196,7 +197,7 @@ for (let depth = 5; depth >= 0; depth--) {
 }
 await prisma.membership.deleteMany({ where: { departmentId: dept.id } });
 await prisma.role.deleteMany({ where: { departmentId: dept.id } });
-await prisma.auditEvent.deleteMany({ where: { departmentId: dept.id } });
+await purgeTestAuditEvents(prisma, { where: { departmentId: dept.id } });
 await prisma.department.delete({ where: { id: dept.id } });
 await prisma.user.deleteMany({ where: { email: "zz-folder-analyst@example.test" } });
 

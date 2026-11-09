@@ -1,4 +1,5 @@
 import type { AuditAction, Prisma, PrismaClient } from "@prisma/client";
+import { auditActorName } from "../../lib/audit.js";
 import { resolveEffectivePermissions, type PermissionActor } from "../../lib/effective-permissions.js";
 
 export class AuditError extends Error {
@@ -17,6 +18,8 @@ interface Deps {
 
 export interface AuditFilters {
   actorUserId?: string;
+  /** "system" = only events the scheduled jobs wrote (auto-delete, the automatic trash purge). */
+  actorType?: "user" | "system";
   action?: AuditAction;
   /** Free-text match against the event's description (catches a document ref, even after purge). */
   documentQuery?: string;
@@ -28,6 +31,7 @@ export interface AuditFilters {
 export interface AuditEventView {
   id: string;
   action: AuditAction;
+  actorType: "user" | "system";
   actorName: string;
   documentRef: string | null;
   targetDescription: string | null;
@@ -63,6 +67,7 @@ function buildWhere(
   // confidential-audit permission — a normal admin never even sees that a confidential doc was touched.
   if (!canViewConfidential) where.isConfidential = false;
   if (filters.actorUserId) where.actorUserId = filters.actorUserId;
+  if (filters.actorType) where.actorType = filters.actorType;
   if (filters.action) where.action = filters.action;
   if (filters.documentQuery) {
     where.targetDescription = { contains: filters.documentQuery, mode: "insensitive" };
@@ -92,7 +97,8 @@ async function queryEvents(
   return rows.map((e) => ({
     id: e.id,
     action: e.action,
-    actorName: e.actor.fullName,
+    actorType: e.actorType,
+    actorName: auditActorName(e),
     documentRef: e.document?.documentRef ?? null,
     targetDescription: e.targetDescription,
     isConfidential: e.isConfidential,

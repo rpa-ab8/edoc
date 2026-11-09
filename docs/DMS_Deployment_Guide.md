@@ -1,6 +1,6 @@
-# DMS — Production Deployment Guide (step by step)
+# Edoc — Production Deployment Guide (step by step)
 
-This guide takes you from nothing to a live, secured DMS at `https://<your-domain>`, one step at a time. Follow it in order and don't skip steps. Each step says **where** you type things (your Windows PC, the server, or a website) and **what you should see** when it worked.
+This guide takes you from nothing to a live, secured Edoc at `https://<your-domain>`, one step at a time. Follow it in order and don't skip steps. Each step says **where** you type things (your Windows PC, the server, or a website) and **what you should see** when it worked.
 
 - **Total time:** about 2–3 hours the first time, plus waiting for DNS. Most of that is account setup.
 - **Server:** DigitalOcean `s-4vcpu-8gb` (see `docs/DMS_Budget_Plan_s-4vcpu-8gb.md`).
@@ -356,7 +356,7 @@ The app sends verification, invitation and password-reset emails through Brevo. 
 1. **Authenticate the domain.** Profile menu (top right) → **Senders, Domains & Dedicated IPs** → **Domains** → **Add a domain** → `abateas.com`. Choose to configure DNS manually.
 2. Brevo shows several DNS records: a Brevo-code TXT record, DKIM and DMARC. For **each one**, 🌐 Cloudflare → DNS → **Add record** with exactly the type, name and value Brevo shows. Set **Proxy status: DNS only** where offered.
 3. Back in Brevo, click **Authenticate this email domain**. It can take a few minutes to go green.
-4. **Add the sender.** **Senders** → **Add sender** → Name `DMS`, email `noreply@abateas.com`.
+4. **Add the sender.** **Senders** → **Add sender** → Name `Edoc`, email `noreply@abateas.com`.
 5. **Create an API key.** Profile menu → **SMTP & API** → **API Keys** → **Generate a new API key** → name `dms-production`.
    **Copy it into the password manager now**, because Brevo only shows it once. Make a new key; don't reuse the development one.
 
@@ -436,7 +436,7 @@ echo "alias dc='docker compose --project-directory ~/dms -f ~/dms/docker-compose
 source ~/.bashrc
 ```
 
-From now on, `dc <something>` runs Docker Compose for the DMS, from any folder.
+From now on, `dc <something>` runs Docker Compose for Edoc, from any folder.
 
 ### 6.4 Create the production settings file
 
@@ -480,7 +480,7 @@ Change these lines and leave everything else as it is:
 | `FRONTEND_URL=` | `https://dms.abateas.com` | Used in email links |
 | `BREVO_API_KEY=` | the key from 5.2 | |
 | `EMAIL_FROM=` | `noreply@abateas.com` | Must be the Brevo sender from 5.2 |
-| `EMAIL_FROM_NAME=` | `Abate DMS` (or similar) | Shown as the sender name |
+| `EMAIL_FROM_NAME=` | `Edoc` (or similar) | Shown as the sender name |
 | `BACKUP_S3_BUCKET=` | `dms-backups` | |
 | `BACKUP_S3_ENDPOINT=` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` | Your real Account ID |
 | `BACKUP_S3_ACCESS_KEY_ID=` | from the **backups** token (5.3 step 6) | |
@@ -537,6 +537,7 @@ dc ps
 | `migrate` | `Exited (0)` ← correct: it runs once and stops |
 | `api` | `Up … (healthy)` |
 | `worker` | `Up` |
+| `retention-worker` | `Up` |
 | `web` | `Up` |
 | `backup` | `Up` |
 
@@ -545,6 +546,7 @@ dc ps
 ```bash
 dc logs migrate | grep -E "applied|Error"
 dc logs worker | tail -2
+dc logs retention-worker | tail -2
 dc logs backup | tail -1
 dc logs web | grep -iE "certificate obtained|error" | tail -3
 ```
@@ -552,6 +554,7 @@ dc logs web | grep -iE "certificate obtained|error" | tail -3
 ✅ **Expected:**
 - migrate: `All migrations have been successfully applied`
 - worker: `[ocr] worker ready, waiting for jobs`
+- retention-worker: `[retention] scheduled daily at 02:00 Asia/Kolkata (cron "0 2 * * *")` then `[retention] worker ready`
 - backup: `[backup] schedule '0 2 * * *' (UTC) … copying to s3://dms-backups`
 - web: `certificate obtained successfully`. If you don't see it yet, wait a minute and check again. Caddy retries by itself.
 
@@ -596,7 +599,7 @@ echo "Invite code: $CODE"
    - **Name:** `Abate`
    - **Invite code:** the code from 8.1
    - Click create.
-3. You land on **Verify your email**. Open that inbox and click the link in the DMS email.
+3. You land on **Verify your email**. Open that inbox and click the link in the Edoc email.
    - No email after 2 minutes? Check spam, then 🐧 `dc logs api | grep -i mail`. Most often the Brevo key or sender domain isn't right (5.2).
 4. After verifying, you arrive at **Onboarding**.
 
