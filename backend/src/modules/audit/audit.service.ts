@@ -158,7 +158,10 @@ export async function exportAudit(
 }
 
 /** RFC-4180 cell quoting: wrap in quotes and double any embedded quote when the value contains a
- *  comma, quote or newline. */
-function csvCell(value: string): string {
-  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+ *  comma, quote or newline. A cell starting with `= + - @`, tab or CR is first prefixed with `'`
+ *  so a spreadsheet opens it as text, not a formula — names and descriptions are user-controlled
+ *  (SECURITY_AUDIT.md L-1, CSV/formula injection). */
+export function csvCell(value: string): string {
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }

@@ -2831,3 +2831,16 @@ screen and it read as a failure. Backend, permissions and the folder picker were
 
 **Test data left behind:** HR-CON-2026-00005, -00007, -00008 (main) and -00006 (General, `a.pdf`)
 were created while reproducing — safe to move to Trash.
+
+## 2026-11-09 — Housekeeping commit + security fixes L-1 and L-9 (SECURITY_AUDIT.md)
+
+- **Commit:** all pending work (PRD v1.2, the 2026-11-07 security fixes, docs, .md/.txt support,
+  the upload-destination fix) committed as `e7f4925` on new branch `release1-v1.2-and-security`.
+  `backend/_backfill.mts` deliberately left uncommitted (one-off, hard-coded path — audit L-8).
+- **L-1 CSV injection:** `audit.service.ts` `csvCell` (now exported) prefixes cells starting with
+  `= + - @`, tab or CR with `'` before RFC-4180 quoting, so audit exports open as text in Excel.
+- **L-9 JWT algorithm:** `lib/jwt.ts` signs with an explicit `HS256` and verifies with
+  `algorithms: ["HS256"]` only; HS512 and `alg: none` tokens are refused. `iss`/`aud` not added.
+- **Test:** new DB-free `npm run check:low-hardening` (15/15). `check:audit` 15/15 and
+  `check:session-revocation` 17/17 unchanged; tsc + eslint clean.
+- `CLAUDE.local.md`: marked the `rpa@abateas.com` login as stale (rejected today).

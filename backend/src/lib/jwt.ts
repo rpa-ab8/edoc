@@ -10,10 +10,12 @@ export interface AccessTokenPayload {
 
 export function signAccessToken(env: Env, payload: AccessTokenPayload): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
+    algorithm: "HS256",
     expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions["expiresIn"],
   });
 }
 
+/** Only HS256 is accepted — never whatever algorithm the token's header claims (SECURITY_AUDIT.md L-9). */
 export function verifyAccessToken(env: Env, token: string): AccessTokenPayload {
-  return jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
+  return jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ["HS256"] }) as AccessTokenPayload;
 }

@@ -259,7 +259,7 @@ Notes:
 
 ## 4. Low severity / hardening
 
-- **L-1 CSV injection** — `audit.service.ts:160-164` quotes cells but does not neutralise a leading `= + - @ \t \r`. `actorName` (user-controlled full name) is exported raw. Prefix such cells with `'`.
+- ✅ **Fixed 2026-11-09** (`check:low-hardening`) **L-1 CSV injection** — `audit.service.ts:160-164` quotes cells but does not neutralise a leading `= + - @ \t \r`. `actorName` (user-controlled full name) is exported raw. Prefix such cells with `'`.
 - **L-2 External-link audit** — `sharing.service.ts:634-657` logs link opens with `actorUserId = sharer`; a viewer's activity looks like the sharer's. `fetchLinkFile` (the actual download) writes no audit event and bypasses the `openedCount`. Add an `actorType = external` and log the file fetch and download separately (with IP / user agent).
 - **L-3 Search permission** — `search.routes.ts` gates on `search.search` only; `searchDocuments` filters by hidden folders but not by `documents.view`. Add `documents.view` to the gate or the dependency map (`permissions.ts` PERMISSION_DEPENDENCIES: `search.search → documents.view`).
 - **L-4 Account enumeration** — login returns a distinct 403 `account_disabled` *before* the password check (`auth.service.ts:294`), and unknown emails skip the argon2 verification (faster response). Register intentionally reveals "email already registered" (Spec §2B.2) — keep rate limit. Add a dummy hash verification for unknown users and check password before revealing disabled status.
@@ -267,7 +267,7 @@ Notes:
 - **L-6 Invite-code race** — `auth.service.ts:215-236` reads `usedCount` then increments, outside a transaction, and increments before the organisation is created (a failed creation burns a use). Use a conditional `updateMany` and create in one transaction.
 - **L-7 Dev compose** — `docker-compose.yml:9,22-23` publishes Postgres/Redis with default credentials (`dms`/no password) on all interfaces. Bind to `127.0.0.1`. Production compose is good (no host ports for DB/Redis; passwords required).
 - **L-8 Destructive test scripts** — `backend/scripts/check-*.ts` and `_backfill.mts` use whatever `DATABASE_URL`/`.env` is loaded and call `deleteMany` (including on audit events). Add a hard guard (`if NODE_ENV==="production" || DATABASE_URL doesn't contain "_test"` → exit) and move `_backfill.mts` (hard-coded `C:/apps/DMS/.env` path) out of the repo root or into `scripts/`.
-- **L-9 JWT** — `lib/jwt.ts` verifies with the default algorithm set; pin `algorithms: ["HS256"]`, and add `iss`/`aud` for future-proofing.
+- ✅ **Fixed 2026-11-09** (`check:low-hardening`; `iss`/`aud` not added) **L-9 JWT** — `lib/jwt.ts` verifies with the default algorithm set; pin `algorithms: ["HS256"]`, and add `iss`/`aud` for future-proofing.
 - **L-10 Rate limiting** — only unauthenticated endpoints are limited (`lib/rate-limits.ts`, deliberately). Add per-user limits on `POST /…/search`, uploads, `/audit/export`, `/organizations/current/users`.
 
 ---

@@ -47,7 +47,8 @@
     "check:retention": "dotenv -e ../.env -- tsx scripts/check-retention.ts",
     "check:legal-hold": "dotenv -e ../.env -- tsx scripts/check-legal-hold.ts",
     "check:filters": "dotenv -e ../.env -- tsx scripts/check-filters.ts",
-    "check:rename": "tsx scripts/check-rename.ts"
+    "check:rename": "tsx scripts/check-rename.ts",
+    "check:low-hardening": "tsx scripts/check-low-hardening.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
