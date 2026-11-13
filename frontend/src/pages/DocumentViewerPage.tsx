@@ -9,7 +9,6 @@ import {
   CheckCircleIcon,
   ChevronLeftIcon,
   ClockIcon,
-  CopyIcon,
   DownloadIcon,
   HoldIcon,
   PencilIcon,
@@ -17,8 +16,10 @@ import {
   TrashIcon,
   UploadCloudIcon,
   UsersIcon,
+  DocumentIcon,
 } from "../components/icons";
 import { ShareDialog } from "../components/ShareDialog";
+import { CopyButton } from "../components/CopyButton";
 import { ApiRequestError } from "../lib/api";
 import { fetchDepartment } from "../lib/departments";
 import {
@@ -224,7 +225,7 @@ export function DocumentViewerPage() {
   if (error || !doc) {
     return (
       <div className="mx-auto max-w-lg px-6 py-24 text-center">
-        <h1 className="text-[22px] font-bold tracking-[-0.4px] text-ink">Document not found</h1>
+        <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-ink">Document not found</h1>
         <p className="mt-3 text-[15px] text-muted">
           It may have been moved or deleted, or you may not have access to it.
         </p>
@@ -236,21 +237,24 @@ export function DocumentViewerPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-canvas">
+    <div className="flex min-h-screen flex-col bg-canvas lg:h-screen">
       {/* Top bar */}
       <header className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-line bg-surface/95 px-6 py-3.5 backdrop-blur">
         <button
           type="button"
           onClick={goBack}
-          className="flex items-center gap-1.5 text-[13.5px] font-medium text-muted hover:text-primary"
+          className={`${secondaryButtonBase} flex items-center gap-1.5 py-2 pl-2.5 pr-3.5`}
         >
           <ChevronLeftIcon size={16} /> Back
         </button>
-        <div className="ml-1 flex min-w-0 items-center gap-2.5">
-          <FileTypeIcon mimeType={currentVersion?.mimeType} fileName={currentVersion?.fileName} className="h-8 w-8" iconSize={16} />
-          <span className="truncate text-[15px] font-semibold text-ink">
-            {doc.titleValue ?? currentVersion?.fileName ?? "Untitled"}
-          </span>
+        <div className="ml-1 flex min-w-0 items-center gap-3">
+          <FileTypeIcon mimeType={currentVersion?.mimeType} fileName={currentVersion?.fileName} className="h-10 w-10" iconSize={18} />
+          <div className="min-w-0">
+            <h1 className="truncate text-[16px] font-semibold leading-tight text-ink">
+              {doc.titleValue ?? currentVersion?.fileName ?? "Untitled"}
+            </h1>
+            <p className="mt-0.5 truncate text-[13.5px] text-subtle">{doc.documentType.name}</p>
+          </div>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
           {canShare && (
@@ -275,10 +279,11 @@ export function DocumentViewerPage() {
                   )
                   .finally(() => setBusy(false));
               }}
+              aria-label="Move to trash"
               title="Move to trash (recoverable)"
-              className={`${secondaryButtonBase} flex items-center gap-2 px-4 py-2 text-danger hover:bg-danger-tint`}
+              className="rounded-lg p-2.5 text-muted transition-colors hover:bg-danger-tint hover:text-danger disabled:opacity-40"
             >
-              <TrashIcon size={15} /> Delete
+              <TrashIcon size={17} />
             </button>
           )}
           {canVersion && (
@@ -312,14 +317,19 @@ export function DocumentViewerPage() {
       </header>
 
       {message && (
-        <div className={`px-6 py-2.5 text-[13.5px] font-medium ${message.ok ? "text-success" : "text-danger"}`}>
+        <div
+          role="status"
+          className={`border-b px-6 py-2.5 text-[14px] font-medium ${
+            message.ok ? "border-success/15 bg-success-tint text-success" : "border-danger/15 bg-danger-tint text-[#A31B1B]"
+          }`}
+        >
           {message.text}
         </div>
       )}
 
-      <div className="flex flex-1 flex-col lg:flex-row">
+      <div className="flex flex-1 flex-col lg:min-h-0 lg:flex-row">
         {/* Preview */}
-        <main className="min-w-0 flex-1 bg-surface-inset p-6">
+        <main className="min-w-0 flex-1 bg-surface-inset p-4 lg:min-h-0 lg:p-5">
           {!canPreview ? (
             <PreviewMessage title="Preview not permitted" body="Your role can open this document's details but not its file preview." />
           ) : !previewType ? (
@@ -332,7 +342,7 @@ export function DocumentViewerPage() {
           ) : previewFailed || (!previewUrl && previewText === null) ? (
             <PreviewMessage title="Couldn't load the preview" body="The file may be unavailable in storage." />
           ) : previewType === "markdown" || previewType === "text" ? (
-            <div className="h-[82vh] overflow-auto rounded-lg border border-line bg-surface px-8 py-7 shadow-card">
+            <div className="mx-auto h-[78vh] max-w-[920px] overflow-auto rounded-xl border border-line bg-surface px-8 py-7 shadow-card lg:h-full">
               {previewType === "markdown" ? (
                 <LazyMarkdownView source={previewText ?? ""} />
               ) : (
@@ -343,7 +353,7 @@ export function DocumentViewerPage() {
             <PreviewMessage title="Couldn't load the preview" body="The file may be unavailable in storage." />
           ) : previewType === "image" ? (
             <div className="flex h-full items-center justify-center">
-              <img src={previewUrl} alt={doc.titleValue ?? "Document preview"} className="max-h-[80vh] max-w-full rounded-lg border border-line bg-surface shadow-card" />
+              <img src={previewUrl} alt={doc.titleValue ?? "Document preview"} className="max-h-[78vh] max-w-full rounded-xl border border-line bg-surface shadow-card lg:max-h-full" />
             </div>
           ) : (
             // Without documents.download, hide the browser PDF viewer's own download/print toolbar
@@ -351,42 +361,47 @@ export function DocumentViewerPage() {
             <iframe
               title="Document preview"
               src={canDownload ? previewUrl : `${previewUrl}#toolbar=0&navpanes=0`}
-              className="h-[82vh] w-full rounded-lg border border-line bg-surface"
+              className="h-[78vh] w-full rounded-xl border border-line bg-surface shadow-card lg:h-full"
             />
           )}
         </main>
 
         {/* Details */}
-        <aside className="w-full shrink-0 border-t border-line bg-surface px-6 py-6 lg:w-[400px] lg:border-l lg:border-t-0">
+        <aside className="w-full shrink-0 border-t border-line bg-surface px-6 py-6 lg:w-[400px] lg:overflow-y-auto lg:border-l lg:border-t-0">
           {/* Document ID — the header of the details panel */}
-          <div className="flex items-center gap-2">
-            <span className="plate px-2.5 py-1 text-[13px]">{doc.documentRef}</span>
-            <button
-              type="button"
-              aria-label="Copy document ID"
-              title="Copy ID"
-              onClick={() => void navigator.clipboard?.writeText(doc.documentRef)}
-              className="rounded p-1.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
-            >
-              <CopyIcon size={14} />
-            </button>
+          <p className="text-[13.5px] font-medium text-subtle">Document ID</p>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <span className="plate px-3 py-1.5 text-[15px]">{doc.documentRef}</span>
+            <CopyButton text={doc.documentRef} size={15} className="p-2" />
           </div>
-          <p className="mt-2 text-[13px] text-subtle">
-            {doc.documentType.name} · Uploaded{" "}
-            {new Date(doc.uploadedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
-          </p>
+          <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 rounded-xl bg-surface-muted/70 px-4 py-4">
+            {[
+              ["Type", doc.documentType.name],
+              [
+                "Uploaded",
+                new Date(doc.uploadedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+              ],
+              ["Version", currentVersion ? `v${currentVersion.versionNumber}` : "—"],
+              ["Size", currentVersion ? humanFileSize(currentVersion.fileSize) : "—"],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-[13.5px] text-subtle">{label}</dt>
+                <dd className="mt-0.5 truncate text-[15px] font-medium tabular-nums text-ink">{value}</dd>
+              </div>
+            ))}
+          </dl>
 
           {/* Legal Hold (RET-5) — the badge for everyone; the reasons and controls for those who manage holds. */}
           {held && (
             <section className="mt-5 rounded-xl border border-warning/25 bg-warning-tint/60 px-4 py-3.5">
               <div className="flex items-center justify-between gap-3">
                 <LegalHoldBadge />
-                <span className="text-[12.5px] text-warning">Can't be deleted while held</span>
+                <span className="text-[13.5px] text-warning">Can't be deleted while held</span>
               </div>
               {hold!.holds.length > 0 && (
                 <ul className="mt-3 space-y-3">
                   {hold!.holds.map((h) => (
-                    <li key={h.id} className="text-[13px] leading-relaxed">
+                    <li key={h.id} className="text-[14px] leading-relaxed">
                       <p className="font-medium text-ink">{h.reason}</p>
                       <p className="text-subtle">
                         {h.scope === "folder" ? `On the folder "${h.folderName}" · ` : ""}
@@ -406,13 +421,13 @@ export function DocumentViewerPage() {
                               });
                             }, "Legal Hold lifted.")
                           }
-                          className="mt-1 text-[12.5px] font-semibold text-warning hover:underline"
+                          className="mt-1 text-[13.5px] font-semibold text-warning hover:underline"
                         >
                           Lift hold
                         </button>
                       )}
                       {h.scope === "folder" && canManageHold && (
-                        <p className="mt-0.5 text-[12px] text-subtle">Lift it from the folder.</p>
+                        <p className="mt-0.5 text-[13.5px] text-subtle">Lift it from the folder.</p>
                       )}
                     </li>
                   ))}
@@ -424,19 +439,23 @@ export function DocumentViewerPage() {
             <button
               type="button"
               onClick={() => setHoldOpen(true)}
-              className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-warning hover:underline"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-warning/30 bg-surface px-3 py-1.5 text-[13.5px] font-medium text-warning shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:bg-warning-tint"
             >
-              <HoldIcon size={14} /> Place Legal Hold
+              <HoldIcon size={15} /> Place Legal Hold
             </button>
           )}
 
           {/* Metadata */}
-          <section className="mt-6">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">Details</h2>
+          <section className="mt-7 border-t border-line-muted pt-6">
+            <div className="mb-3.5 flex items-center justify-between">
+              <h2 className="text-[16px] font-semibold text-ink">Details</h2>
               {canEdit && !editing && (
-                <button type="button" onClick={startEditing} className="flex items-center gap-1.5 text-[13px] font-medium text-primary hover:underline">
-                  <PencilIcon size={13} /> Edit
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  className="-mr-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary-tint"
+                >
+                  <PencilIcon size={14} /> Edit
                 </button>
               )}
             </div>
@@ -458,46 +477,51 @@ export function DocumentViewerPage() {
                 <p className="text-[13.5px] text-subtle">Loading fields…</p>
               )
             ) : doc.fieldValues.length > 0 ? (
-              <dl className="space-y-2.5">
+              <dl className="divide-y divide-line-muted">
                 {doc.fieldValues.map((fv) => (
-                  <div key={fv.fieldDefId ?? fv.label} className="flex justify-between gap-4">
-                    <dt className="text-[13.5px] text-subtle">{fv.label}</dt>
-                    <dd className="text-right text-[13.5px] font-medium text-ink">{fv.value}</dd>
+                  <div key={fv.fieldDefId ?? fv.label} className="grid grid-cols-[128px_minmax(0,1fr)] gap-4 py-2.5 first:pt-0 last:pb-0">
+                    <dt className="text-[14px] text-subtle">{fv.label}</dt>
+                    <dd className="break-words text-[14.5px] font-medium text-ink">{fv.value}</dd>
                   </div>
                 ))}
               </dl>
             ) : (
-              <p className="text-[13.5px] text-subtle">No metadata yet{canEdit ? " — add some with Edit." : "."}</p>
+              <p className="text-[14.5px] text-muted">No details yet{canEdit ? ". Add some with Edit." : "."}</p>
             )}
           </section>
 
           {/* Version history — hidden for a view-only recipient */}
           {canSeeHistory && (
           <section className="mt-7 border-t border-line-muted pt-6">
-            <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">Version history</h2>
-            <ul className="space-y-2">
+            <h2 className="mb-3.5 text-[16px] font-semibold text-ink">Version history</h2>
+            <ul className="space-y-2.5">
               {[...doc.versions].reverse().map((v) => (
-                <li key={v.id} className="rounded-xl border border-line-muted px-3.5 py-3">
+                <li
+                  key={v.id}
+                  className={`rounded-xl border px-4 py-3.5 ${
+                    v.isCurrent ? "border-primary/25 bg-primary-tint/40" : "border-line-muted"
+                  }`}
+                >
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-[12.5px] font-semibold text-ink">v{v.versionNumber}</span>
+                    <span className="text-[15px] font-semibold text-ink">Version {v.versionNumber}</span>
                     {v.isCurrent && (
-                      <span className="rounded bg-primary-tint px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-primary">Current</span>
+                      <span className="rounded-full bg-primary px-2 py-0.5 text-[12px] font-medium text-white">Current</span>
                     )}
-                    <span className="ml-auto text-[12px] text-subtle">{humanFileSize(v.fileSize)}</span>
+                    <span className="ml-auto text-[13.5px] tabular-nums text-subtle">{humanFileSize(v.fileSize)}</span>
                   </div>
-                  <p className="mt-1 truncate text-[13px] text-muted">{v.fileName}</p>
-                  <p className="mt-0.5 text-[12px] text-subtle">
-                    {v.uploadedBy?.fullName ?? "Someone"} · {whenLabel(v.createdAt)}
-                    {v.changeNote ? ` · ${v.changeNote}` : ""}
+                  <p className="mt-1.5 truncate text-[14px] text-muted">{v.fileName}</p>
+                  <p className="mt-0.5 text-[13.5px] text-subtle">
+                    {v.uploadedBy?.fullName ?? "Someone"}, {whenLabel(v.createdAt)}
                   </p>
+                  {v.changeNote && <p className="mt-1.5 text-[13.5px] leading-snug text-muted">{v.changeNote}</p>}
                   {canVersion && !v.isCurrent && (
                     <button
                       type="button"
                       disabled={busy}
                       onClick={() => void run(() => restoreDocumentVersion(documentId, v.id), `Restored v${v.versionNumber}.`)}
-                      className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary hover:underline"
+                      className="-ml-2 mt-2 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13.5px] font-medium text-primary transition-colors hover:bg-primary-tint"
                     >
-                      <RefreshIcon size={13} /> Restore this version
+                      <RefreshIcon size={14} /> Restore this version
                     </button>
                   )}
                 </li>
@@ -509,23 +533,25 @@ export function DocumentViewerPage() {
           {/* Activity — member-only, hidden for a view-only recipient */}
           {canSeeHistory && (
           <section className="mt-7 border-t border-line-muted pt-6">
-            <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">Activity</h2>
+            <h2 className="mb-3.5 text-[16px] font-semibold text-ink">Activity</h2>
             {doc.activity && doc.activity.length > 0 ? (
-              <ul className="space-y-2.5">
+              <ul className="space-y-3.5">
                 {doc.activity.slice(0, 12).map((a) => (
-                  <li key={a.id} className="flex items-start gap-2.5">
-                    <span className="mt-0.5 text-subtle">
-                      {a.action === "download" ? <DownloadIcon size={13} /> : a.action === "view" ? <ClockIcon size={13} /> : <CheckCircleIcon size={13} />}
+                  <li key={a.id} className="flex items-start gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-muted text-muted">
+                      {a.action === "download" ? <DownloadIcon size={15} /> : a.action === "view" ? <ClockIcon size={15} /> : <CheckCircleIcon size={15} />}
                     </span>
-                    <p className="text-[13px] leading-snug text-muted">
-                      <span className="font-medium text-ink">{a.actorName}</span> {ACTION_LABEL[a.action] ?? a.action}
-                      <span className="text-subtle"> · {whenLabel(a.occurredAt)}</span>
-                    </p>
+                    <div className="min-w-0 pt-0.5">
+                      <p className="text-[14px] leading-snug text-muted">
+                        <span className="font-medium text-ink">{a.actorName}</span> {ACTION_LABEL[a.action] ?? a.action}
+                      </p>
+                      <p className="text-[13.5px] text-subtle">{whenLabel(a.occurredAt)}</p>
+                    </div>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-[13.5px] text-subtle">No activity recorded yet.</p>
+              <p className="text-[14.5px] text-muted">No activity recorded yet.</p>
             )}
           </section>
           )}
@@ -576,8 +602,11 @@ export function DocumentViewerPage() {
 function PreviewMessage({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex h-full min-h-[50vh] flex-col items-center justify-center text-center">
-      <p className="text-[15px] font-semibold text-ink">{title}</p>
-      {body && <p className="mt-1.5 max-w-xs text-[13.5px] text-subtle">{body}</p>}
+      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-surface text-subtle shadow-card">
+        <DocumentIcon size={22} />
+      </span>
+      <p className="mt-5 text-[17px] font-semibold text-ink">{title}</p>
+      {body && <p className="mt-2 max-w-xs text-[15px] leading-relaxed text-muted">{body}</p>}
     </div>
   );
 }

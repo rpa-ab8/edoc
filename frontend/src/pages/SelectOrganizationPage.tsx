@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiRequest, ApiRequestError } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
-import { StatusPill } from "../components/AuthCard";
+import { AuthCard, FormAlert, Spinner } from "../components/AuthCard";
+import { ChevronRightIcon } from "../components/icons";
 
 export function SelectOrganizationPage() {
   const navigate = useNavigate();
@@ -35,33 +36,29 @@ export function SelectOrganizationPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-sm animate-card-in">
-        <div className="rounded-2xl border border-line bg-surface p-8 shadow-card-lg">
-          <h1 className="text-[22px] font-bold leading-tight tracking-[-0.4px] text-ink">
-            Choose an organization
-          </h1>
-          <p className="mt-1.5 text-[13.5px] text-muted">Your access spans more than one workspace.</p>
-          {error && <p className="mt-4 text-[13.5px] text-danger">{error}</p>}
-          <div className="mt-6 space-y-2">
-            {organizations.map((org, i) => (
-              <button
-                key={org.id}
-                onClick={() => pick(org.id)}
-                disabled={selecting !== null}
-                className="flex w-full animate-fade-up items-center justify-between rounded-lg border border-line px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-surface-muted disabled:opacity-50"
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <span className="text-[14px] font-medium text-ink">{org.name}</span>
-                <span className="flex items-center gap-2">
-                  {org.isSuperAdmin && <StatusPill tone="primary">Super Admin</StatusPill>}
-                  <span className="text-subtle">{selecting === org.id ? "..." : "→"}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
+    <AuthCard title="Choose an organization" subtitle="You belong to more than one. Pick the one to open.">
+      <FormAlert message={error} />
+      <div className={`space-y-2.5 ${error ? "mt-5" : ""}`}>
+        {organizations.map((org) => (
+          <button
+            key={org.id}
+            onClick={() => pick(org.id)}
+            disabled={selecting !== null}
+            className="group flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-primary/50 hover:bg-primary-tint/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-[15px] font-semibold text-primary">
+              {org.name.trim().charAt(0).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px] font-medium text-ink">{org.name}</span>
+              {org.isSuperAdmin && <span className="mt-0.5 block text-[13.5px] text-subtle">Super Admin</span>}
+            </span>
+            <span className="shrink-0 text-subtle transition-colors group-hover:text-primary">
+              {selecting === org.id ? <Spinner /> : <ChevronRightIcon size={18} />}
+            </span>
+          </button>
+        ))}
       </div>
-    </main>
+    </AuthCard>
   );
 }

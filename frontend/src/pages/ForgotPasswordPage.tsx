@@ -41,6 +41,9 @@ export function ForgotPasswordPage() {
             <FieldLabel>Email</FieldLabel>
             <input
               type="email"
+              autoComplete="email"
+              autoFocus
+              placeholder="you@company.com"
               className={inputClass}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -52,7 +55,7 @@ export function ForgotPasswordPage() {
           </button>
         </form>
       )}
-      <p className="mt-5 text-center text-[13.5px]">
+      <p className="mt-8 border-t border-line pt-6 text-[14px]">
         <Link to="/login" className={linkClass}>
           Back to sign in
         </Link>

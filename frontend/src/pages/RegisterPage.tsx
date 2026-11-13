@@ -4,8 +4,10 @@ import { apiRequest, ApiRequestError } from "../lib/api";
 import { useAuthStore, type AuthUser } from "../store/authStore";
 import {
   AuthCard,
-  FieldError,
-  FieldLabel,
+  Field,
+  FormAlert,
+  PasswordInput,
+  Spinner,
   inputClass,
   linkClass,
   primaryButtonClass,
@@ -52,42 +54,57 @@ export function RegisterPage() {
       step={{ current: 1, total: 3 }}
     >
       <form onSubmit={onSubmit} className="space-y-4">
-        <div>
-          <FieldLabel>Full name</FieldLabel>
-          <input
-            className={inputClass}
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <FieldLabel>Work email</FieldLabel>
-          <input
-            type="email"
-            className={inputClass}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <FieldLabel>Password</FieldLabel>
-          <input
-            type="password"
-            className={inputClass}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={8}
-            required
-          />
-        </div>
-        <FieldError message={error ?? undefined} />
-        <button type="submit" className={primaryButtonClass} disabled={submitting}>
-          {submitting ? "Creating account..." : "Create account"}
+        <FormAlert message={error} />
+        <Field label="Full name">
+          {(id) => (
+            <input
+              id={id}
+              autoComplete="name"
+              autoFocus
+              className={inputClass}
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+            />
+          )}
+        </Field>
+        <Field label="Work email">
+          {(id) => (
+            <input
+              id={id}
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              className={inputClass}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          )}
+        </Field>
+        <Field label="Password">
+          {(id) => (
+            <PasswordInput
+              id={id}
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              minLength={8}
+              required
+            />
+          )}
+        </Field>
+        <button
+          type="submit"
+          className={`${primaryButtonClass} flex items-center justify-center gap-2 py-3`}
+          disabled={submitting}
+        >
+          {submitting && <Spinner />}
+          {submitting ? "Creating account…" : "Create account"}
         </button>
       </form>
-      <p className="mt-5 text-center text-[13.5px] text-muted">
+      <p className="mt-8 border-t border-line pt-6 text-[14px] text-muted">
         Already have an account?{" "}
         <Link to="/login" className={linkClass}>
           Sign in

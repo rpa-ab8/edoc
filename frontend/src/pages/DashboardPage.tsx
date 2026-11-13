@@ -1,10 +1,11 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
 import { AppShell } from "../components/AppShell";
+import { primaryButtonBase } from "../components/AuthCard";
 import {
-  BoltIcon,
   ChevronRightIcon,
   DatabaseIcon,
   DocumentIcon,
@@ -52,18 +53,45 @@ function formatBytes(raw: string): string {
   return `${exp === 0 ? value : value.toFixed(1)} ${units[exp]}`;
 }
 
-function todayLabel(): string {
-  return new Date().toLocaleDateString(undefined, { weekday: undefined, year: "numeric", month: "short", day: "numeric" });
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-const CARD_SHADOW = "shadow-card";
+const STORAGE_NAME = { nas: "Network storage (NAS)", r2: "Cloudflare R2" } as const;
+
+const STORAGE_STATUS = {
+  verified: { label: "Connected", className: "bg-success-tint text-success", dot: "bg-success" },
+  pending: { label: "Not tested yet", className: "bg-warning-tint text-warning", dot: "bg-warning" },
+  error: { label: "Connection failed", className: "bg-danger-tint text-danger", dot: "bg-danger" },
+} as const;
+
+const CARD = "rounded-2xl border border-line bg-surface shadow-card";
+
+/** A row in the "Manage" card: icon tile, title, one line saying what's behind it. */
+function ManageLink({ to, icon, title, hint }: { to: string; icon: ReactNode; title: string; hint: string }) {
+  return (
+    <Link
+      to={to}
+      className="group flex items-center gap-3.5 rounded-xl px-3 py-3 transition-colors hover:bg-surface-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-muted transition-colors group-hover:bg-primary-tint group-hover:text-primary">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-medium text-ink">{title}</span>
+        <span className="block truncate text-[13.5px] text-subtle">{hint}</span>
+      </span>
+      <ChevronRightIcon size={16} className="shrink-0 text-subtle transition-colors group-hover:text-primary" />
+    </Link>
+  );
+}
 
 export function DashboardPage() {
   const { organizations, currentOrganizationId } = useAuthStore();
   const currentOrg = organizations.find((o) => o.id === currentOrganizationId);
   const isSuperAdmin = currentOrg?.isSuperAdmin ?? false;
 
-  const { data: health } = useQuery({
+  const { data: health, isError: healthFailed } = useQuery({
     queryKey: ["health"],
     queryFn: () => apiRequest<HealthResponse>("/health"),
   });
@@ -74,237 +102,259 @@ export function DashboardPage() {
     enabled: isSuperAdmin,
   });
 
-  const tiles = [
+  const stats = [
     {
       label: "Departments",
       value: dashboard?.counts.departments,
-      sub: dashboard && dashboard.counts.departments === 0 ? "No departments yet" : "Active departments",
-      icon: <FolderIcon size={18} />,
-      tone: "primary" as const,
+      sub: dashboard && dashboard.counts.departments === 0 ? "None created yet" : "Active",
+      icon: <FolderIcon size={16} />,
     },
     {
       label: "Users",
       value: dashboard?.counts.users,
-      sub: "Active users",
-      icon: <UsersIcon size={18} />,
-      tone: "success" as const,
+      sub: "Active accounts",
+      icon: <UsersIcon size={16} />,
     },
     {
       label: "Documents",
       value: dashboard?.counts.documents,
-      sub: dashboard && dashboard.counts.documents === 0 ? "No documents" : "Stored documents",
-      icon: <DocumentIcon size={18} />,
-      tone: "info" as const,
+      sub: dashboard && dashboard.counts.documents === 0 ? "None uploaded yet" : "Across all departments",
+      icon: <DocumentIcon size={16} />,
     },
     {
       label: "Storage used",
       value: dashboard ? formatBytes(dashboard.counts.storageUsedBytes) : undefined,
       sub: "Total stored",
-      icon: <DatabaseIcon size={18} />,
-      tone: "accent" as const,
+      icon: <DatabaseIcon size={16} />,
     },
   ];
 
-  const tileTone = {
-    primary: "bg-primary-tint text-primary",
-    success: "bg-success-tint text-success",
-    info: "bg-info-tint text-info",
-    accent: "bg-accent-tint text-accent",
-  };
+  const departments = dashboard?.departments ?? [];
+  const hasDepartments = departments.length > 0;
+  // The bar beside each document count is relative to the busiest department, so the list can be
+  // compared at a glance. It is a comparison, not a quota.
+  const maxDocuments = Math.max(1, ...departments.map((d) => d.documentCount));
+  const storage = dashboard?.storage ?? null;
+  const storageStatus = storage ? STORAGE_STATUS[storage.status] : null;
 
   return (
     <AppShell>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[30px] font-bold leading-[1.15] tracking-[-0.6px] text-ink">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[15px] text-muted">Organization overview</p>
+          <h1 className="mt-1 truncate text-[30px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink">
             {currentOrg?.name}
           </h1>
-          <p className="mt-2 text-[15px] leading-relaxed text-muted">Organization overview</p>
         </div>
-        <span
-          className={`hidden shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] font-medium text-ink sm:flex ${CARD_SHADOW}`}
-        >
-          {todayLabel()}
-        </span>
+        {isSuperAdmin && hasDepartments && (
+          <Link to="/departments/new" className={`${primaryButtonBase} flex shrink-0 items-center gap-2`}>
+            <PlusIcon size={16} /> New department
+          </Link>
+        )}
       </div>
 
       {isSuperAdmin ? (
         <>
-          <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {tiles.map((tile) => (
-              <div key={tile.label} className={`rounded-2xl border border-line bg-surface px-6 py-5 ${CARD_SHADOW}`}>
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${tileTone[tile.tone]}`}
-                  >
-                    {tile.icon}
-                  </span>
-                  <p className="text-[13px] font-medium text-subtle">{tile.label}</p>
-                </div>
-                <p className="mt-4 text-[32px] font-bold leading-none tracking-[-0.5px] text-ink">
-                  {tile.value ?? "—"}
-                </p>
-                <p className="mt-2 text-[12px] text-subtle">{tile.sub}</p>
+          {/* One band, four figures. A single surface with hairline dividers reads as one summary;
+              four separate cards with coloured icon discs read as four unrelated widgets. */}
+          <dl className={`mt-8 grid grid-cols-2 overflow-hidden lg:grid-cols-4 ${CARD}`}>
+            {stats.map((stat, i) => (
+              <div
+                key={stat.label}
+                className={`border-line-muted px-6 py-6 ${i % 2 === 1 ? "border-l" : ""} ${
+                  i >= 2 ? "border-t lg:border-t-0" : ""
+                } ${i === 2 ? "lg:border-l" : ""}`}
+              >
+                <dt className="flex items-center gap-2 text-[13.5px] font-medium text-muted">
+                  <span className="text-subtle">{stat.icon}</span>
+                  {stat.label}
+                </dt>
+                <dd className="mt-3.5 text-[34px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-ink">
+                  {stat.value ?? <span className="text-line">—</span>}
+                </dd>
+                <dd className="mt-2.5 text-[13.5px] text-subtle">{stat.sub}</dd>
               </div>
             ))}
-          </div>
+          </dl>
 
-          <div className={`mt-8 rounded-2xl border border-line bg-surface ${CARD_SHADOW}`}>
-            <div className="flex items-center justify-between border-b border-line-muted px-6 py-5">
-              <h2 className="text-[19px] font-semibold tracking-[-0.2px] text-ink">Departments</h2>
-              {dashboard && dashboard.departments.length > 0 && (
-                <Link
-                  to="/departments/new"
-                  className="flex items-center gap-1.5 rounded-lg border border-line px-3.5 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-surface-muted"
-                >
-                  <PlusIcon size={14} /> New department
-                </Link>
-              )}
-            </div>
-            {dashboard && dashboard.departments.length > 0 ? (
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-line bg-surface-muted">
-                    <th className="px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">
-                      Department
-                    </th>
-                    <th className="px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">
-                      Members
-                    </th>
-                    <th className="px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">
-                      Docs
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.departments.map((d) => (
-                    <tr key={d.id} className="border-b border-line-muted last:border-b-0 hover:bg-surface-muted/60">
-                      <td className="px-6 py-4">
-                        <Link
-                          to={`/departments/${d.id}`}
-                          className="flex items-center gap-2.5 text-[15px] font-medium text-ink hover:text-primary"
-                        >
-                          <FolderIcon className="text-subtle" />
-                          {d.name}
-                        </Link>
-                      </td>
-                      <td className="px-6 py-4 text-[15px] text-muted">{d.memberCount}</td>
-                      <td className="px-6 py-4 text-[15px] text-muted">{d.documentCount}</td>
+          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <section className={`overflow-hidden ${CARD}`}>
+              <div className="flex items-center justify-between gap-4 px-6 py-5">
+                <div>
+                  <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-ink">Departments</h2>
+                  {hasDepartments && (
+                    <p className="mt-0.5 text-[13.5px] text-subtle">Open one to manage its people, types and rules.</p>
+                  )}
+                </div>
+                {hasDepartments && (
+                  <Link
+                    to="/departments"
+                    className="flex shrink-0 items-center gap-1 text-[14px] font-medium text-primary transition-colors hover:text-primary-dark"
+                  >
+                    View all <ChevronRightIcon size={15} />
+                  </Link>
+                )}
+              </div>
+
+              {hasDepartments ? (
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-y border-line-muted bg-surface-muted/70">
+                      <th className="px-6 py-3 text-[13px] font-medium text-subtle">Department</th>
+                      <th className="w-28 px-4 py-3 text-right text-[13px] font-medium text-subtle">Members</th>
+                      <th className="w-56 px-4 py-3 text-[13px] font-medium text-subtle">Documents</th>
+                      <th className="w-12" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div className="flex flex-col items-center px-6 py-16 text-center">
-                <span className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-line text-subtle">
-                  <FolderIcon size={22} />
-                </span>
-                <p className="mt-5 text-[15px] font-semibold text-ink">No departments yet</p>
-                <p className="mt-1.5 max-w-sm text-[13.5px] text-subtle">
-                  A department carries its own document types, fields, vocabulary and roles. Start
-                  from a template and adjust.
-                </p>
-                <Link
-                  to="/departments/new"
-                  className="mt-6 flex items-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-[13.5px] font-semibold text-white shadow-action transition-all hover:bg-primary-dark"
-                >
-                  <PlusIcon size={15} /> Create the first department
-                </Link>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-6 grid gap-5 lg:grid-cols-2">
-            <div className={`rounded-2xl border border-line bg-surface p-6 ${CARD_SHADOW}`}>
-              <h3 className="flex items-center gap-2 text-[15.5px] font-semibold text-ink">
-                <DatabaseIcon size={17} className="text-subtle" /> Storage
-              </h3>
-              {dashboard?.storage ? (
-                <>
-                  <div className="mt-4 flex items-center gap-2">
-                    <DatabaseIcon size={16} className="text-subtle" />
-                    <span className="text-[15px] font-medium text-ink">
-                      {dashboard.storage.backendType.toUpperCase()}
-                    </span>
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold ${
-                        dashboard.storage.status === "verified"
-                          ? "bg-success-tint text-success"
-                          : "bg-danger-tint text-danger"
-                      }`}
-                    >
-                      {dashboard.storage.status === "verified" ? "Connected" : dashboard.storage.status}
-                    </span>
-                  </div>
-                  {/* No usage bar: the dashboard carries no quota to measure against, and a bar
-                      pinned at 100% read as "storage full" with a few KB stored. */}
-                  <p className="mt-4 text-[13.5px] text-subtle">
-                    {formatBytes(dashboard.counts.storageUsedBytes)} stored in total
-                  </p>
-                </>
+                  </thead>
+                  <tbody>
+                    {departments.map((d) => (
+                      <tr
+                        key={d.id}
+                        className="group border-b border-line-muted transition-colors last:border-b-0 hover:bg-surface-muted/50"
+                      >
+                        <td className="px-6 py-3.5">
+                          <Link
+                            to={`/departments/${d.id}`}
+                            className="flex items-center gap-3.5 text-[15px] font-medium text-ink group-hover:text-primary"
+                          >
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-primary">
+                              <FolderIcon size={18} />
+                            </span>
+                            <span className="truncate">{d.name}</span>
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3.5 text-right text-[15px] tabular-nums text-muted">{d.memberCount}</td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <span className="w-12 text-[15px] tabular-nums text-ink">{d.documentCount}</span>
+                            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+                              <span
+                                className="block h-full rounded-full bg-primary/70"
+                                style={{ width: `${(d.documentCount / maxDocuments) * 100}%` }}
+                              />
+                            </span>
+                          </div>
+                        </td>
+                        <td className="pr-5 text-right">
+                          <Link
+                            to={`/departments/${d.id}`}
+                            aria-label={`Open ${d.name}`}
+                            className="inline-flex rounded-md p-1.5 text-subtle transition-colors hover:bg-surface-muted group-hover:text-primary"
+                          >
+                            <ChevronRightIcon size={16} />
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               ) : (
-                <p className="mt-4 text-[13.5px] text-subtle">Not configured yet.</p>
+                <div className="flex flex-col items-center border-t border-line-muted px-6 py-16 text-center">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-tint text-primary">
+                    <FolderIcon size={24} />
+                  </span>
+                  <p className="mt-5 text-[17px] font-semibold text-ink">
+                    {dashboard ? "Create your first department" : "Loading departments…"}
+                  </p>
+                  {dashboard && (
+                    <>
+                      <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted">
+                        A department holds its own document types, fields and roles. Start from a
+                        template and adjust it.
+                      </p>
+                      <Link to="/departments/new" className={`${primaryButtonBase} mt-6 flex items-center gap-2`}>
+                        <PlusIcon size={16} /> New department
+                      </Link>
+                    </>
+                  )}
+                </div>
               )}
-              <Link
-                to="/storage-setup"
-                className="mt-5 flex items-center justify-center gap-1.5 rounded-lg border border-primary/30 bg-primary-tint/60 px-4 py-3 text-[13.5px] font-semibold text-primary transition-colors hover:bg-primary-tint"
-              >
-                {dashboard?.storage ? "Manage storage" : "Configure storage"}
-                <ChevronRightIcon size={15} />
-              </Link>
-            </div>
+            </section>
 
-            <div className={`rounded-2xl border border-line bg-surface p-6 ${CARD_SHADOW}`}>
-              <h3 className="flex items-center gap-2 text-[15.5px] font-semibold text-ink">
-                <BoltIcon size={16} className="text-subtle" /> Quick actions
-              </h3>
-              <div className="mt-4 space-y-2">
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-1">
+              <section className={`p-6 ${CARD}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-[17px] font-semibold text-ink">Storage</h2>
+                  {storageStatus && (
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium ${storageStatus.className}`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${storageStatus.dot}`} />
+                      {storageStatus.label}
+                    </span>
+                  )}
+                </div>
+
+                {storage ? (
+                  <>
+                    <div className="mt-5 flex items-center gap-3.5">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-muted text-muted">
+                        <DatabaseIcon size={20} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-medium text-ink">{STORAGE_NAME[storage.backendType]}</p>
+                        <p className="text-[13.5px] text-subtle">
+                          {storage.lastTestedAt ? `Last checked ${formatDate(storage.lastTestedAt)}` : "Not checked yet"}
+                        </p>
+                      </div>
+                    </div>
+                    {/* No usage bar: there is no quota to measure against, and a bar pinned at
+                        100% read as "storage full" with a few KB stored. */}
+                    <dl className="mt-5 flex items-baseline justify-between border-t border-line-muted pt-4">
+                      <dt className="text-[13.5px] text-subtle">Stored in total</dt>
+                      <dd className="text-[15px] font-medium tabular-nums text-ink">
+                        {dashboard ? formatBytes(dashboard.counts.storageUsedBytes) : "—"}
+                      </dd>
+                    </dl>
+                  </>
+                ) : (
+                  <p className="mt-4 text-[15px] leading-relaxed text-muted">
+                    {dashboard
+                      ? "No storage is connected yet."
+                      : "Loading…"}
+                  </p>
+                )}
+
                 <Link
+                  to="/storage-setup"
+                  className="mt-5 flex items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-4 py-2.5 text-[14.5px] font-medium text-ink shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:border-[#CDD3CF] hover:bg-surface-muted"
+                >
+                  {storage ? "Manage storage" : "Connect storage"}
+                </Link>
+              </section>
+
+              <section className={`p-3 ${CARD}`}>
+                <h2 className="px-3 pb-1 pt-3 text-[17px] font-semibold text-ink">Manage</h2>
+                <ManageLink
                   to="/user-directory"
-                  className="flex items-center justify-between rounded-lg border border-line-muted bg-surface-muted px-4 py-3 text-[13.5px] font-medium text-ink transition-colors hover:border-primary/40 hover:bg-surface"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <UsersIcon size={17} className="text-subtle" /> Manage users
-                  </span>
-                  <ChevronRightIcon size={15} className="text-subtle" />
-                </Link>
-                <Link
+                  icon={<UsersIcon size={18} />}
+                  title="Users"
+                  hint="Invite people and see who has access"
+                />
+                <ManageLink
                   to="/organization-settings"
-                  className="flex items-center justify-between rounded-lg border border-line-muted bg-surface-muted px-4 py-3 text-[13.5px] font-medium text-ink transition-colors hover:border-primary/40 hover:bg-surface"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <GearIcon size={17} className="text-subtle" /> Organization settings
-                  </span>
-                  <ChevronRightIcon size={15} className="text-subtle" />
-                </Link>
-              </div>
+                  icon={<GearIcon size={18} />}
+                  title="Organization settings"
+                  hint="Name, industry, time zone and folder depth"
+                />
+              </section>
             </div>
           </div>
         </>
       ) : (
-        <p className="mt-8 text-[13.5px] text-subtle">
-          Department workspace, folders, and documents are not built yet — this is the
-          authenticated landing spot until then.
+        <p className="mt-8 max-w-xl text-[15px] leading-relaxed text-muted">
+          This page is for the organization's Super Admin. Use the link in the sidebar to go back to
+          your department.
         </p>
       )}
 
-      <div
-        className={`mt-6 flex items-center justify-between rounded-xl border border-line-muted bg-surface px-5 py-3.5 text-[13px] ${CARD_SHADOW}`}
-      >
-        <span className="flex items-center gap-2 font-medium text-muted">
-          <DatabaseIcon size={14} className="text-subtle" /> Backend connection
-        </span>
-        {health ? (
-          <span className="flex items-center gap-2 text-success">
-            <span className="h-1.5 w-1.5 rounded-full bg-success" />
-            Connected
-            <span className="text-line">|</span>
-            <span className="font-mono text-subtle">{health.timestamp}</span>
-          </span>
-        ) : (
-          <span className="text-subtle">checking...</span>
-        )}
-      </div>
+      <p className="mt-8 flex items-center gap-2 text-[13.5px] text-subtle" role="status">
+        <span
+          className={`h-2 w-2 rounded-full ${health ? "bg-success" : healthFailed ? "bg-danger" : "bg-line"}`}
+          aria-hidden="true"
+        />
+        {health ? "All systems running" : healthFailed ? "Can't reach the server" : "Checking the server…"}
+      </p>
     </AppShell>
   );
 }

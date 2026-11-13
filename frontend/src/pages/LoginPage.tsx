@@ -4,8 +4,10 @@ import { apiRequest, ApiRequestError } from "../lib/api";
 import { useAuthStore, type AuthUser, type OrganizationSummary } from "../store/authStore";
 import {
   AuthCard,
-  FieldError,
-  FieldLabel,
+  Field,
+  FormAlert,
+  PasswordInput,
+  Spinner,
   inputClass,
   linkClass,
   primaryButtonClass,
@@ -72,41 +74,58 @@ export function LoginPage() {
   }
 
   return (
-    <AuthCard title="Sign in" subtitle="Welcome back to your document workspace.">
-      <form onSubmit={onSubmit} className="space-y-4">
-        <div>
-          <FieldLabel>Email</FieldLabel>
-          <input
-            type="email"
-            className={inputClass}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <FieldLabel>Password</FieldLabel>
-          <input
-            type="password"
-            className={inputClass}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-        <FieldError message={error ?? undefined} />
-        <button type="submit" className={primaryButtonClass} disabled={submitting}>
-          {submitting ? "Signing in..." : "Sign in"}
+    <AuthCard title="Sign in to Edoc" subtitle="Enter your work email and password to open your documents.">
+      <form onSubmit={onSubmit} className="space-y-5">
+        <FormAlert message={error} />
+        <Field label="Email">
+          {(id) => (
+            <input
+              id={id}
+              type="email"
+              autoComplete="email"
+              autoFocus
+              placeholder="you@company.com"
+              className={inputClass}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          )}
+        </Field>
+        <Field
+          label="Password"
+          action={
+            <Link to="/forgot-password" className={`text-[13.5px] ${linkClass}`}>
+              Forgot password?
+            </Link>
+          }
+        >
+          {(id) => (
+            <PasswordInput
+              id={id}
+              autoComplete="current-password"
+              placeholder="Your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          )}
+        </Field>
+        <button
+          type="submit"
+          className={`${primaryButtonClass} flex items-center justify-center gap-2 py-3`}
+          disabled={submitting}
+        >
+          {submitting && <Spinner />}
+          {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>
-      <div className="mt-5 flex justify-between text-[13.5px]">
+      <p className="mt-8 border-t border-line pt-6 text-[14px] text-muted">
+        New to Edoc?{" "}
         <Link to="/register" className={linkClass}>
-          Create account
+          Create an account
         </Link>
-        <Link to="/forgot-password" className={linkClass}>
-          Forgot password?
-        </Link>
-      </div>
+      </p>
     </AuthCard>
   );
 }

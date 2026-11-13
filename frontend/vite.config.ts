@@ -11,5 +11,7 @@ export default defineConfig({
   envDir: path.resolve(dirname, ".."),
   server: {
     port: 5173,
+    // Listen on every interface so phones/PCs on the office LAN can open the dev server.
+    host: true,
   },
 });

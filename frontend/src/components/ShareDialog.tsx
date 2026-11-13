@@ -4,6 +4,7 @@ import { inputBase, primaryButtonBase, secondaryButtonBase, StatusPill } from ".
 import { Select } from "./Select";
 import { CheckIcon, CopyIcon, TrashIcon, UsersIcon, XIcon } from "./icons";
 import { ApiRequestError } from "../lib/api";
+import { copyText } from "../lib/clipboard";
 import { fetchDepartment } from "../lib/departments";
 import { useAuthStore } from "../store/authStore";
 import {
@@ -258,7 +259,7 @@ function ExternalZone({
 
   async function copy() {
     if (!linkUrl) return;
-    await navigator.clipboard?.writeText(linkUrl);
+    if (!(await copyText(linkUrl))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }

@@ -4,14 +4,18 @@ import { useAuthStore } from "../store/authStore";
 import { Logomark } from "./AuthCard";
 import { AccountFooter } from "./AccountFooter";
 import {
+  ArrowRightIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ClockIcon,
   FolderIcon,
   GearIcon,
   GridIcon,
   HoldIcon,
   LockIcon,
   PlusIcon,
+  TrashIcon,
+  UploadCloudIcon,
   UsersIcon,
 } from "./icons";
 import type { FolderNode } from "../lib/folders";
@@ -22,13 +26,18 @@ import type { QuickView } from "../lib/search";
 // Recent and "Uploaded by me" are live (Module 7). "Shared with me/by me" render in the same
 // main-panel list (Module 9) and span every department. "Trash" (Module 11) shows the department's
 // trash in the same panel. They all draw from their own APIs but present in one place.
-const QUICK_VIEWS: { label: string; view?: QuickView }[] = [
-  { label: "Recent", view: "recent" },
-  { label: "Uploaded by me", view: "uploaded_by_me" },
-  { label: "Shared with me", view: "shared_with_me" },
-  { label: "Shared by me", view: "shared_by_me" },
-  { label: "Trash", view: "trash" },
+const QUICK_VIEWS: { label: string; view?: QuickView; icon: ReactNode }[] = [
+  { label: "Recent", view: "recent", icon: <ClockIcon size={16} /> },
+  { label: "Uploaded by me", view: "uploaded_by_me", icon: <UploadCloudIcon size={16} /> },
+  { label: "Shared with me", view: "shared_with_me", icon: <UsersIcon size={16} /> },
+  { label: "Shared by me", view: "shared_by_me", icon: <ArrowRightIcon size={16} /> },
+  { label: "Trash", view: "trash", icon: <TrashIcon size={16} /> },
 ];
+
+// The selected item on the rail: a raised row with a bright emerald edge. A pale mint pill on the
+// near-black rail was the loudest thing on the screen; this marks the place without shouting.
+const RAIL_ACTIVE = "bg-rail-raised shadow-[inset_3px_0_0_#3FBF95]";
+const RAIL_LABEL = "text-[12.5px] font-medium text-rail-muted/80";
 
 export function WorkspaceShell({
   department,
@@ -80,8 +89,8 @@ export function WorkspaceShell({
     return (
       <li>
         <div
-          className={`group flex items-center gap-1 rounded-lg pr-2 transition-colors ${
-            isCurrent ? "bg-primary-tint" : "hover:bg-rail-raised"
+          className={`group flex items-center gap-0.5 rounded-lg pr-2 transition-colors ${
+            isCurrent ? RAIL_ACTIVE : "hover:bg-rail-raised/70"
           }`}
           style={{ paddingLeft: `${folder.depth * 12}px` }}
         >
@@ -103,12 +112,13 @@ export function WorkspaceShell({
           <Link
             to={`/w/${department.id}/f/${folder.id}`}
             className={`flex min-w-0 flex-1 items-center gap-2 py-2 text-[14px] ${
-              isCurrent ? "font-medium text-primary" : "text-rail-muted hover:text-rail-ink"
+              isCurrent ? "font-medium text-rail-ink" : "text-rail-muted hover:text-rail-ink"
             }`}
           >
+            <FolderIcon size={15} className={`shrink-0 ${isCurrent ? "text-[#6FD6B0]" : "text-rail-muted/70"}`} />
             <span className="truncate">{folder.name}</span>
             {folder.isConfidential && (
-              <span title="Confidential — named members only" className="shrink-0 text-accent">
+              <span title="Confidential — named members only" className="shrink-0 text-[#E7B866]">
                 <LockIcon size={13} />
               </span>
             )}
@@ -132,7 +142,7 @@ export function WorkspaceShell({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-72 shrink-0 flex-col overflow-y-auto bg-rail">
+      <aside className="flex w-72 shrink-0 flex-col overflow-y-auto bg-rail rail-surface">
         <div className="flex items-center gap-3 px-5 py-5">
           <Logomark size={38} />
           <div className="min-w-0">
@@ -144,9 +154,7 @@ export function WorkspaceShell({
         {/* The department you're in, and the way out of it. A single-department user gets a
             label rather than a control that only ever leads back to where they already are. */}
         <div className="relative px-4 pb-2">
-          <p className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-rail-muted">
-            Department
-          </p>
+          <p className={`px-1 pb-2 ${RAIL_LABEL}`}>Department</p>
           <button
             type="button"
             onClick={() => departments.length > 1 && setSwitcherOpen((v) => !v)}
@@ -204,9 +212,7 @@ export function WorkspaceShell({
         </div>
 
         <div className="px-4 py-2">
-          <p className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-rail-muted">
-            Views
-          </p>
+          <p className={`px-1 pb-1.5 ${RAIL_LABEL}`}>Views</p>
           <ul>
             {QUICK_VIEWS.map((qv) => {
               // A view filters/loads in the main panel; anything not yet built (Trash) stays inert
@@ -218,8 +224,9 @@ export function WorkspaceShell({
                     key={qv.label}
                     aria-disabled="true"
                     title="Arrives with trash"
-                    className="cursor-not-allowed rounded-lg px-3 py-2 text-[14px] text-rail-muted/40"
+                    className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[14px] text-rail-muted/40"
                   >
+                    {qv.icon}
                     {qv.label}
                   </li>
                 );
@@ -230,10 +237,13 @@ export function WorkspaceShell({
                   <button
                     type="button"
                     onClick={() => onQuickView!(qv.view!)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-[14px] transition-colors ${
-                      isActive ? "bg-primary-tint font-medium text-primary" : "text-rail-muted hover:bg-rail-raised hover:text-rail-ink"
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] transition-colors ${
+                      isActive
+                        ? `${RAIL_ACTIVE} font-medium text-rail-ink`
+                        : "text-rail-muted hover:bg-rail-raised/70 hover:text-rail-ink"
                     }`}
                   >
+                    <span className={isActive ? "text-[#6FD6B0]" : ""}>{qv.icon}</span>
                     {qv.label}
                   </button>
                 </li>
@@ -244,7 +254,7 @@ export function WorkspaceShell({
 
         <div className="flex-1 px-4 py-2">
           <div className="flex items-center justify-between px-1 pb-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-rail-muted">Folders</p>
+            <p className={RAIL_LABEL}>Folders</p>
             {canCreateFolder && (
               <button
                 type="button"

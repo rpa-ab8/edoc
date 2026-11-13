@@ -452,3 +452,33 @@ export function CalendarIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function EyeIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path
+        d="M2.2 10S5 4.6 10 4.6 17.8 10 17.8 10 15 15.4 10 15.4 2.2 10 2.2 10Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="10" cy="10" r="2.4" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path
+        d="M8.2 4.9A7 7 0 0 1 10 4.6c5 0 7.8 5.4 7.8 5.4a13 13 0 0 1-2.1 2.8M12.9 14.7a6.6 6.6 0 0 1-2.9.7C5 15.4 2.2 10 2.2 10a13.2 13.2 0 0 1 3.3-3.8"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M8.3 8.4a2.4 2.4 0 0 0 3.3 3.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="m3.5 3.5 13 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}

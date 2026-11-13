@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, ApiRequestError } from "../lib/api";
-import { AuthCard, FieldError, FieldLabel, inputClass, primaryButtonClass } from "../components/AuthCard";
+import { AuthCard, FieldError, FieldLabel, PasswordInput, primaryButtonClass } from "../components/AuthCard";
 
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
@@ -41,9 +41,9 @@ export function ResetPasswordPage() {
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <FieldLabel>New password</FieldLabel>
-          <input
-            type="password"
-            className={inputClass}
+          <PasswordInput
+            autoComplete="new-password"
+            autoFocus
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             minLength={8}

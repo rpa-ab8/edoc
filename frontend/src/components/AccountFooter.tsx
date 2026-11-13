@@ -64,7 +64,7 @@ export function AccountFooter() {
             className="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-2.5 text-left text-[13.5px] font-medium text-rail-muted transition-colors hover:bg-rail-raised hover:text-rail-ink"
           >
             <span className="min-w-0">
-              <span className="block text-[11px] uppercase tracking-[0.08em] text-rail-muted/70">Organization</span>
+              <span className="block text-[12.5px] font-medium text-rail-muted/80">Organization</span>
               <span className="block truncate text-rail-ink">{switching ? "Switching…" : currentOrg?.name}</span>
             </span>
             <ChevronDownIcon size={15} className={`shrink-0 ${orgMenuOpen ? "rotate-180" : ""}`} />

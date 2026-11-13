@@ -31,7 +31,7 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-72 shrink-0 flex-col bg-rail">
+      <aside className="flex w-72 shrink-0 flex-col bg-rail rail-surface">
         <div className="flex items-center gap-3 border-b border-rail-line px-6 py-6">
           <Logomark size={42} />
           <div className="min-w-0">

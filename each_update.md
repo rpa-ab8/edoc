@@ -2844,3 +2844,298 @@ were created while reproducing — safe to move to Trash.
 - **Test:** new DB-free `npm run check:low-hardening` (15/15). `check:audit` 15/15 and
   `check:session-revocation` 17/17 unchanged; tsc + eslint clean.
 - `CLAUDE.local.md`: marked the `rpa@abateas.com` login as stale (rejected today).
+
+## 2026-11-11 — Data protection: survive losing Postgres or R2 (plan: Layers 1, 3, 4 started)
+
+**Why:** Postgres is the only map from opaque object keys (`<org>/<uuid>`) to documents; files in R2 are anonymous without it, and the only DB backup sat on the same droplet.
+
+- **Backups (`deploy/backup/`):** `backup.sh` now verifies each dump (`pg_restore --list` + minimum size), can encrypt with `age` (`BACKUP_AGE_RECIPIENT`; `restore.sh` decrypts via `BACKUP_AGE_IDENTITY`), fails the run if no off-site copy was made (`BACKUP_REQUIRE_OFFSITE`, default true in `docker-compose.prod.yml`), and pings a dead-man's-switch (`BACKUP_HEALTHCHECK_URL`, `/fail` on failure). The Dockerfile adds `age`.
+- **Self-describing objects:** `StorageDriver.put` takes optional `ObjectMeta` (org, file name, sha256, uploader); the R2 driver stores it as object metadata and sends `ChecksumSHA256` so R2 rejects corrupted uploads; the NAS driver now writes temp → fsync → rename.
+- **Manifest + scrub:** new `backend/src/worker/data-guard.ts` (compose service `data-guard`): daily JSONL manifest of every version (storage ref, checksum, file name, document ref/title, folder path) into `./backups`, which `backup.sh` encrypts and ships off-site; plus a sample re-hash of stored files against `Version.checksum` (missing/mismatch → logged, exit 1, `/fail` ping).
+- **Purge ordering:** `destroyTrashedDocument` now deletes DB rows first and files second, and logs (not swallows) a failed file delete — a failure leaves an orphan blob, never a row pointing at a deleted file. Legal Hold check unchanged.
+- **Verified:** `tsc --noEmit` clean. **Not verified:** DB-backed checks (`check:trash`, `check:retention`, `check:upload`, `check:storage-targets`) could not run — dev Postgres at localhost:5433 was down. The R2 `ChecksumSHA256` header and `age`/healthcheck paths have not been exercised against real R2 or a built container.
+- **Still to do (not code):** ~~enable R2 bucket versioning~~ (R2 has no S3 versioning — corrected below) + replication to a second provider; put the off-site backups bucket in a different account; keep the `age` private key and `.env.production` offline; disaster-recovery runbook + monthly restore drill. **Decision needed:** a delayed blob-delete grace period needs a new table (data-model change) — rely on R2 versioning for now?
+
+## 2026-11-11 — Data protection docs + deployment steps
+
+- **New doc `docs/DMS_Data_Protection_and_Restore.md`:**
+  - Why the DB and R2 depend on each other, and the 8 protection layers.
+  - What each component does, and alert handling.
+  - Restore procedures: same-server DB restore, full rebuild on a new server, files from the replica, undoing a purge, last-resort recovery from the manifest, lost secrets.
+  - Monthly restore drill, settings reference, known limits.
+- **Correction:** Cloudflare R2 has **no S3 bucket versioning** (it has bucket locks, which would block Edoc's own purges). The design is now: every off-site copy is in **Backblaze B2**, a different provider.
+  - Encrypted dumps and manifests go to a backups bucket: hidden after 90 days, erased 30 days after hiding.
+  - Documents are replicated nightly by host-cron `rclone sync` (R2 read-only token → B2 replica bucket, deletions kept 90 days, `--max-delete 500` tripwire).
+  - Both B2 keys are created with the `b2` CLI **without `deleteFiles`**.
+- **Deployment Guide:**
+  - Part 0 adds B2, Healthchecks.io, a USB stick and two golden rules.
+  - The worksheet is extended.
+  - 5.3 is rewritten: R2 now holds documents only, with an app token and a read-only replica token.
+  - New sections: 5.4 B2 buckets + no-delete keys, 5.5 age key pair, 5.6 Healthchecks.
+  - 6.4 gets the new env vars.
+  - New 7.0 creates the backups folder (uid 1000). 7.2/7.3 list `data-guard`.
+  - New **Part 10:** the replica job, plus go-live checks a–f (manifest/scrub, encrypted off-site backup, no-delete key test, alert test, first restore drill, droplet backups).
+  - Monitoring, Routine and Troubleshooting are renumbered to 11/12/13. The routine gains a monthly drill and a yearly rebuild. The checklist is extended.
+- **Also updated:**
+  - `deploy/README.md` §5 (NAS needs the mount in `data-guard`), §7 (rewritten), §8 (B2 and age keys), §9 and §11.
+  - `.env.production.example` (new vars, B2 endpoint).
+  - `docs/DMS_Technology_Stack.md` backups row.
+  - `docs/developer/01`, `02` and `09`.
+- **Code:** the backup image adds `curl`, and the health ping uses it (busybox `wget` may lack HTTPS). The compose comment notes that NAS must also be mounted in `data-guard`.
+- **Compliance flag:** the B2 replica keeps permanently deleted documents for up to 90 days. This needs confirming against the retention policy (Data Protection §3.6).
+- **Not verified:** none of the deployment steps were run against real B2/R2/Healthchecks. The `b2 key create` capability list (incl. `listAllBucketNames` for S3-API use) and rclone's B2 hide-on-delete behaviour are from the providers' documented behaviour, not tested here. Go-live check 10.6 c/d exists to prove them.
+
+## 2026-11-11 — Regression test of the data-protection changes
+
+- **Backend:** `tsc --noEmit` and eslint are clean.
+  - All **28 check suites pass** (0 failures): 1,064 checks in total, including upload 18/18, trash 19/19, retention 105/105, legal-hold 67/67, storage-targets 25/25, tenant-isolation 69/69 and access-matrix 88/88.
+  - `check:upload` runs against the real Abate R2 bucket, so R2 accepted the new `ChecksumSHA256` header and object metadata.
+- **data-guard** (against dev DB + real R2):
+  - The manifest has 29 versions.
+  - Scrub: 24/24 and 5/5 files re-hashed and matching. The two orgs with no storage were skipped as designed.
+- **Backup image** (built locally, against the dev DB):
+  - With `BACKUP_REQUIRE_OFFSITE=true` and no bucket, the run fails as intended.
+  - The encrypted dump is written and verified.
+  - Restoring into a scratch DB gives identical counts (21 docs / 29 versions / 478 audit / 9 users / 3 protection triggers).
+  - Decrypting with the wrong age key is refused.
+  - Upload to an unreachable endpoint gives FAILED, exit 1, and a `/fail` ping is attempted.
+  - Upload to a local S3 stand-in (`rclone serve s3`) copies the dump and the manifest, both encrypted; the manifest decrypts to 29 lines.
+  - The scratch DB was dropped; the dev DB was untouched.
+- **Not tested:** real Backblaze B2 (keys and lifecycle), Healthchecks.io, and the host-cron replica script. These are covered by Deployment Guide go-live checks 10.6.
+
+## 2026-11-11 — Image OCR switched off for production (budget: 2 vCPU / 4 GB server)
+
+**Why:** management dropped OCR from Release 1. The budget (Claude Doc *Edoc Production Budget*, ≈ $42/month) sizes the server at `s-2vcpu-4gb`, which can't carry Tesseract.
+
+- **New setting `OCR_IMAGES_ENABLED`** (`config/env.ts`): **off unless "true"/"1"**.
+  - `upload.service.ts` `needsOcr(env, format)`: with it off, JPG/PNG versions are stored `ocrStatus=done` with no text and are **never queued**. They stay searchable by name, ID and metadata.
+  - PDFs are always queued for embedded-text extraction (light, not Tesseract). This is unchanged. Scanned PDFs were never OCR'd in any case.
+  - The OCR worker has a second guard: an image job queued earlier returns no text without loading Tesseract. Its start-up log now reads `(PDF text: on, image OCR: off)`.
+- **Production can't turn it on by accident:**
+  - `docker-compose.prod.yml` pins `OCR_IMAGES_ENABLED: ${OCR_IMAGES_ENABLED:-false}` in the shared backend block and in `data-guard`.
+  - `docker compose config` confirms `"false"` in api, worker, retention-worker, migrate and data-guard, both with the example file and with the line deleted from it.
+  - `.env.production.example` / `.env.example` set it to `false`.
+  - `.env.production.example` also sets `MAX_CONCURRENT_UPLOADS=4` (~0.5 GB of buffers for a 4 GB server).
+- **Docs:**
+  - Deployment Guide: droplet size is now `s-2vcpu-4gb` ($24); cost table, expected worker log and the troubleshooting row are updated.
+  - `deploy/README.md`: size, troubleshooting, and how to turn image OCR on later (resize first).
+  - Developer docs 02/09 updated.
+  - `DMS_Budget_Plan_s-4vcpu-8gb.md` is marked superseded; it is kept as the with-OCR costing.
+- **Tests:**
+  - `check:upload-content` gains 2 permanent checks (59/59). With the switch off, images are `done` and absent from the BullMQ `ocr` queue while PDFs are queued. Run with `OCR_IMAGES_ENABLED=true`, images are pending and queued (also 59/59).
+  - Full suite: all 28 suites pass, 1,077 checks, 0 failures. `tsc` and eslint are clean.
+
+## 2026-11-11 — Full verification + docs aligned with the final decisions
+
+**Final decisions everything now follows:**
+- **Server:** DigitalOcean `s-2vcpu-4gb`, with image OCR **off** (`OCR_IMAGES_ENABLED=false`) and `MAX_CONCURRENT_UPLOADS=4`.
+- **Storage:** documents in R2; every off-site copy in Backblaze B2.
+  - Encrypted dumps and manifests: hidden after 90 days, erased 30 days later.
+  - File replica: deletions kept 90 days.
+  - No-delete keys.
+- **Jobs:** data-guard 01:30, backup 02:00, replica 03:30 UTC. Healthchecks.io alerts for each.
+- **Budget:** ≈ $42/month (Claude Doc *Edoc Production Budget*).
+
+**Docs fixed to match:**
+- `DMS_Scope_and_MVP_Definition.md` and `DMS_Technology_Stack.md`: a dated **production decision note** next to the OCR requirement. The Tech Stack server row is now 2 vCPU / 4 GB.
+- `DMS_Production_Budget_Estimate.md`: marked superseded.
+- `CLAUDE.md` stack line, root `README.md` worker comment, `DEVELOPMENT_ROADMAP.md` "Next up" (B2, guide, budget, data-protection doc), and developer docs 01/05/06: image OCR described as off unless enabled.
+- A repo-wide grep finds no remaining reference to the 8 GB server as current, R2 backups buckets, R2 versioning or the 60-day lifecycle.
+
+**⚠ Flag:** PRD UPL-6 / SRCH-1 and the Scope doc still list OCR of scans as a Release 1 requirement. The feature is built and tested. Production runs with it off by management decision, and that is recorded beside the Scope line. The PRD text itself is unchanged and is the product owner's call.
+
+**Verification run:**
+- **Backend:** `tsc` clean, eslint clean. All **28 suites pass: 1,077 checks, 0 failures**, including the `rename` suite that checks the docs' product naming.
+- **Frontend:** eslint, typecheck and production build all pass.
+- **Data-protection numbers:** code defaults match every doc (times, retention days, bucket and alert names).
+- **Production compose:** `docker compose config` resolves `OCR_IMAGES_ENABLED: "false"` in all 5 backend services, even with the line removed from the env file.
+- **Production backend image** (built from `backend/Dockerfile`, runs as uid 1000):
+  - Contains `dist/worker/data-guard.js`.
+  - The OCR worker starts with `(PDF text: on, image OCR: off)`.
+  - `data-guard --once` writes the manifest and verifies 29/29 files on real R2. Two orgs with no storage are skipped as designed.
+- **Earlier today:** backup and restore round trip with `age` encryption and the off-site upload, verified against a local S3 stand-in.
+- **Not verifiable locally:** real Backblaze B2, Healthchecks.io and the host-cron replica job. They are covered by Deployment Guide go-live checks 10.6 a–f.
+
+## 2026-11-12 — Dev server reachable on the local network
+
+- `frontend/vite.config.ts`: `server.host: true`, so Vite listens on every interface (the backend
+  already listens on `0.0.0.0`).
+- `.env` (local, not committed): `CORS_ORIGIN`, `FRONTEND_URL` and `VITE_API_URL` now use this PC's
+  LAN IP (`172.16.71.26`) instead of `localhost`. Open the app at `http://172.16.71.26:5173` from
+  every device, this PC included. If you open `localhost` while the API is set to the IP, the
+  refresh cookie is cross-site and login won't stick.
+- Windows Firewall needs inbound TCP 5173 and 4000 allowed (admin PowerShell).
+- Known LAN-over-HTTP limit: the copy-to-clipboard buttons do nothing, because browsers only allow
+  the Clipboard API on HTTPS or localhost.
+
+## 2026-11-12 — Fix: copy buttons did nothing over LAN (plain HTTP)
+
+`navigator.clipboard` only exists on HTTPS or localhost, so over `http://<LAN IP>:5173` every
+copy button was a silent no-op (the `?.` swallowed it).
+
+- New `frontend/src/lib/clipboard.ts` → `copyText()`: uses the Clipboard API when available,
+  otherwise falls back to a hidden textarea + `document.execCommand("copy")` (works over HTTP,
+  iOS-safe selection).
+- New `frontend/src/components/CopyButton.tsx`: the shared document-ID copy button. It shows a green
+  check mark for 1.5 s after a successful copy (before, there was no feedback at all).
+- Replaced the four inline document-ID copy buttons (workspace list + grid,
+  document viewer, upload panel) with `CopyButton`; the share-link copy in `ShareDialog` now uses
+  `copyText()` and only shows "copied" if it actually worked.
+- `tsc -b` and ESLint clean.
+
+## 2026-11-12 — Sign-in screens redesigned; shared polish across the app
+
+Palette and fonts unchanged (emerald / dark rail / Inter, per the 2026-07-23 reference). No logic changes.
+
+**Signed-out frame (`components/AuthCard.tsx`)** — replaces the small card floating on an empty page:
+- Two panes. Left: the dark rail with the Edoc brand, one statement ("One permanent ID for every
+  document.") and a sample record showing an ID plate and three kept versions. Right: the form on
+  white, 400px column, 30px title. Below `lg` the left pane is hidden and a small brand row shows.
+- Every page that uses `AuthCard` gets it: login, register, forgot/reset password, verify email,
+  create organization, accept invitation. `SelectOrganizationPage` now uses `AuthCard` too
+  (organization rows with an initial tile and chevron instead of a text arrow).
+- New shared pieces: `Field` (label tied to its input, optional action on the label row),
+  `PasswordInput` (show/hide toggle), `FormAlert` (form-level error block), `Spinner`.
+  New icons `EyeIcon` / `EyeOffIcon`.
+- Login: "Forgot password?" sits on the password label row, autofocus + autocomplete +
+  placeholders, error shown as an alert above the fields, spinner while signing in.
+  Register / reset / forgot got the same field treatment.
+
+**Shared polish (reaches every screen):**
+- `inputBase`: faint shadow and a hover border. `primaryButtonBase` / `secondaryButtonBase`: pressed
+  state (1px down), secondary gets a faint shadow and hover border.
+- `Logomark`: soft top-to-bottom gradient with an inner highlight.
+- `index.css`: `.rail-surface` (faint emerald light on the sidebar, applied in `AppShell` and
+  `WorkspaceShell`), `.auth-pane`, `.plate-on-rail`. No `tailwind.config.js` change, so no dev-server
+  restart is needed.
+
+**Checked:** `tsc -b` and ESLint clean; login and register viewed in Chrome at desktop width, no
+console errors. **Not checked:** the phone layout (window resize did not take), and the signed-in
+screens (sidebar, buttons, inputs) — they were changed through shared styles but not viewed.
+
+## 2026-11-12 — Sign-in frame redone as full-screen artwork (user rejected the two-pane version)
+
+The two-pane layout with the sample record was rejected ("make it artistic"). `AuthCard` now is:
+- **`AuthArt`** (inline SVG, no image file): a paper-cut landscape of six stacked hill sheets from
+  deep rail green at the back to pale mint at the front, each casting a shadow on the one behind; a
+  pale disc rising behind the hills; four loose pages drifting up (slow 8s drift, off under
+  reduced-motion); paper grain over everything. Same greens as the app palette.
+- The form on a floating white card (28px corners, deep shadow) on the right; a serif line
+  ("Every page in its place.") in the sky on the left at `lg` and up.
+- **Fraunces** added to the Google Fonts link in `index.html`, used for that one line only. Inter
+  stays the UI font.
+- Removed the now-unused `.auth-pane` and `.plate-on-rail` from `index.css`; added `.auth-page`.
+- `Field`, `PasswordInput`, `FormAlert`, `Spinner` and the shared button/input polish are unchanged.
+
+Checked: `tsc -b` + ESLint clean; login viewed in Chrome at desktop width. Phone width not viewed.
+
+## 2026-11-13 — Sign-in: card moved left, background redrawn as a deep night valley
+
+User feedback on the paper-cut hills version: put the form on the left, and make the artwork deeper.
+- `AuthCard`: the white form card is now on the left; the serif line sits top-right, right-aligned.
+- `AuthArt` redrawn: night sky with a fixed star field, a moon with a wide glow, seven ridges
+  receding from near-black pine slopes at the front to pale hazy peaks at the back (each ridge
+  fades to haze toward its base), mist in two valleys, pine silhouettes on the two nearest slopes,
+  three loose pages drifting past the moon. Still inline SVG, same greens, paper grain kept.
+  Anchored to the bottom (`xMidYMax slice`) so the foreground is never cropped on short screens.
+- No change to the form, fields or any logic.
+
+Checked: `tsc -b` + ESLint clean; login viewed in Chrome at desktop width. Phone width not viewed.
+
+## 2026-11-13 — Sign-in background simplified
+
+User asked for a simple design after the night-valley version. `AuthArt` is now a deep green
+gradient with one soft light and three low smooth hills at the bottom edge. Removed the moon,
+stars, mountain ridges, pines, mist, drifting pages and grain, plus the unused `.auth-page` CSS.
+The headline is smaller, vertically centred on the right, and its sub-sentence is gone. Card stays
+on the left; form unchanged. `tsc -b` + ESLint clean; viewed in Chrome at desktop width only.
+
+## 2026-11-13 — Organization overview (Super Admin dashboard) redesigned
+
+`pages/DashboardPage.tsx`, presentation only — same two queries, same links, palette unchanged.
+- Header: "Organization overview" above the organization name; the one primary button
+  ("New department") sits here. The date chip is gone.
+- The four count cards became one summary band with hairline dividers (sentence-case labels,
+  34px tabular figures). This also fixes the Storage tile, which used `bg-accent-tint text-accent`,
+  tokens that no longer exist.
+- Two columns at `xl`: Departments table on the left; Storage and Manage cards on the right.
+- Departments table: sentence-case headers, icon tile per row, right-aligned member count, a thin
+  bar beside each document count (relative to the busiest department), chevron to open, "View all".
+  Empty state rewritten with one primary action.
+- Storage card: readable backend name, status pill for verified / pending / error (pending used to
+  show as red), "Last checked" date from `lastTestedAt`, total stored.
+- "Quick actions" is now "Manage" with a one-line hint per row.
+- The "Backend connection" bar with a raw timestamp is now one quiet status line.
+- Replaced the stale "not built yet" text shown to non-Super-Admins.
+
+Checked: `tsc -b` + ESLint clean. **Not viewed in a browser** — it needs a Super Admin sign-in.
+
+## 2026-11-13 — Department workspace restyled (presentation only)
+
+Palette unchanged; no logic, permission or data changes.
+
+**Sidebar (`WorkspaceShell.tsx`, `AccountFooter.tsx`)**
+- Section labels (Department / Views / Folders / Organization) are sentence case, not tracked caps.
+- Each view has an icon; each folder has a folder icon.
+- Selected view/folder is a raised row with a bright emerald left edge, replacing the pale mint pill.
+- Confidential lock on the rail used `text-accent` (token no longer exists) — now amber.
+
+**Main panel (`DepartmentWorkspacePage.tsx`)**
+- Folder header: folder actions (Folder access / Manage access / Legal Hold, rename, move, delete)
+  are right-aligned, text actions as small bordered buttons.
+- Document table: sentence-case headers; title first with the ID plate + copy under it; type as a
+  quiet chip; new **Uploaded** column (`uploadedAt`, shown at `lg`+); size right-aligned; "New
+  version" and "Delete" are icon buttons with tooltips and aria-labels; "Open" keeps its label.
+  Search/quick-view results table matches.
+- Filters button shows its active count as a badge instead of "Filters · 2".
+- Empty states: emerald icon tile, 17px title, 15px text. The boxed hint under the table is now one
+  plain line. Two more dead `text-accent` uses replaced with `text-warning`.
+
+Checked: `tsc -b` + ESLint clean; a folder with documents viewed in Chrome as a Department Admin,
+no console errors. Not viewed: search results, quick views, trash, empty states, confidential folders.
+
+## 2026-11-13 — Document viewer restyled (presentation only)
+
+`pages/DocumentViewerPage.tsx`. Palette unchanged; no logic, permission or data changes.
+- **Frame:** at `lg`+ the viewer is exactly window-height: the preview fills the space under the
+  top bar and the details panel scrolls on its own (was a fixed 82vh preview with a gap below and a
+  page scrollbar). Below `lg` it stacks as before.
+- **Top bar:** bordered Back button; title with the document type under it; Delete is now a quiet
+  icon button (tooltip + aria-label) so Download stays the one primary action. Status messages show
+  in a tinted bar.
+- **Details panel:** "Document ID" label over a larger plate; a four-fact block (type, uploaded,
+  version, size); Legal Hold as a small bordered button; section titles in sentence case at 16px;
+  field rows as label/value columns with dividers; versions as cards ("Version 1", current one
+  tinted with a green pill, change note on its own line); activity rows with an icon disc and the
+  time on a second line. All panel text is 13.5px or larger.
+- Preview placeholder messages get an icon and larger text.
+
+Checked: `tsc -b` + ESLint clean; a PDF viewed in Chrome as a Department Admin. Not viewed: image /
+text / markdown previews, a held document, edit mode, multi-version history, narrow screens.
+
+## 2026-11-13 — Fix: a failed invitation email no longer leaves a pending invitation behind
+
+Symptom: inviting from Legal showed an error. Cause: Brevo refused the send ("unrecognised IP address"
+— authorised-IP list in the Brevo account), but `createInvitation` had already saved the invitation,
+so a pending row stayed behind, and the screen showed a vague error.
+
+`backend/src/modules/invitation/invitation.service.ts`:
+- `sendInviteEmail` now turns any send failure into `InvitationError(502, "email_send_failed")` with
+  a plain message ("We couldn't send the invitation email, so no invitation was created…"). The
+  provider's own reason goes to the server log only (`[invitation] email to … failed: …`).
+- `createInvitation` deletes the just-created invitation (only if still `pending`) when the send
+  fails, so retrying the same address works instead of answering "already open — resend it".
+- `resendInvitation` keeps its invitation on a failed send (it had already been sent once) and gets
+  the same clear message.
+- No schema, audit or permission change; the "Invitation sent" audit entry is still written only after
+  a successful send.
+
+Checked: `tsc` + ESLint clean. Live against the dev backend as the HR department admin, with Brevo
+still refusing: a create to a throwaway `.invalid` address returned 502 with the new message, left 0
+invitation rows, and a second identical attempt gave the same 502 (not 409). Not tested: the success
+path (Brevo is blocked until this PC's IP is authorised) and Resend.
+
+Still to do in Brevo (not code): authorise this machine's IP at app.brevo.com/security/authorised_ips,
+and the production server's IP before go-live. The pending invitation for the misspelled address
+`vidhugovindofficoal@gmail.com` (Legal, Staff, 2026-11-13) predates this fix — revoke it on the
+Members page.

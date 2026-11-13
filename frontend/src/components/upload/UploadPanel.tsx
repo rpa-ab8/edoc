@@ -13,10 +13,10 @@ import {
 } from "../../lib/documents";
 import { ApiRequestError } from "../../lib/api";
 import type { DraftDocumentType, DraftField } from "../../lib/departments";
+import { CopyButton } from "../CopyButton";
 import { FileTypeIcon } from "../FileTypeIcon";
 import {
   CheckCircleIcon,
-  CopyIcon,
   DocumentIcon,
   FolderIcon,
   TrashIcon,
@@ -427,15 +427,7 @@ function StatusChip({ item }: { item: UploadItem }) {
         {item.ref ? (
           <>
             <span className="plate px-1.5 py-0.5 text-[11.5px]">{item.ref}</span>
-            <button
-              type="button"
-              aria-label="Copy document ID"
-              title="Copy ID"
-              onClick={() => void navigator.clipboard?.writeText(item.ref!)}
-              className="rounded p-0.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
-            >
-              <CopyIcon size={13} />
-            </button>
+            <CopyButton text={item.ref!} className="p-0.5" />
           </>
         ) : (
           "Filed"

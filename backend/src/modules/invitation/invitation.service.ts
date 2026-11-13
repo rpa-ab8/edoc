@@ -58,16 +58,27 @@ async function sendInviteEmail(
   to: string,
   context: { organizationName: string; departmentName: string; roleName: string; inviterName: string; url: string },
 ) {
-  await sendMail(env, {
-    to,
-    subject: `${context.inviterName} invited you to ${context.organizationName} on Edoc`,
-    text:
-      `${context.inviterName} has invited you to join ${context.organizationName} on Edoc.\n\n` +
-      `Department: ${context.departmentName}\n` +
-      `Role: ${context.roleName}\n\n` +
-      `Accept the invitation:\n${context.url}\n\n` +
-      `This invitation expires in ${INVITATION_TTL_DAYS} days. If you weren't expecting it, ignore this email.`,
-  });
+  try {
+    await sendMail(env, {
+      to,
+      subject: `${context.inviterName} invited you to ${context.organizationName} on Edoc`,
+      text:
+        `${context.inviterName} has invited you to join ${context.organizationName} on Edoc.\n\n` +
+        `Department: ${context.departmentName}\n` +
+        `Role: ${context.roleName}\n\n` +
+        `Accept the invitation:\n${context.url}\n\n` +
+        `This invitation expires in ${INVITATION_TTL_DAYS} days. If you weren't expecting it, ignore this email.`,
+    });
+  } catch (err) {
+    // The provider's reason (bad key, unauthorised IP, unverified sender…) is for whoever runs the
+    // server, not for the person clicking Invite — log it here, tell them what they can act on.
+    console.error(`[invitation] email to ${to} failed:`, err instanceof Error ? err.message : err);
+    throw new InvitationError(
+      502,
+      "email_send_failed",
+      "We couldn't send the invitation email, so no invitation was created. Try again, or ask an administrator to check the email settings.",
+    );
+  }
 }
 
 export async function listInvitations(deps: Deps, organizationId: string, departmentId?: string) {
@@ -162,13 +173,21 @@ export async function createInvitation(
     prisma.user.findUniqueOrThrow({ where: { id: actor.userId } }),
   ]);
 
-  await sendInviteEmail(env, email, {
-    organizationName: organization.name,
-    departmentName: department.name,
-    roleName: role.name,
-    inviterName: inviter.fullName,
-    url: inviteUrl(env, raw),
-  });
+  try {
+    await sendInviteEmail(env, email, {
+      organizationName: organization.name,
+      departmentName: department.name,
+      roleName: role.name,
+      inviterName: inviter.fullName,
+      url: inviteUrl(env, raw),
+    });
+  } catch (err) {
+    // No email went out, so nobody holds the link: remove the invitation rather than leave a
+    // pending one that blocks inviting this address again ("resend it instead") for an email
+    // that was never delivered. Resend (below) keeps its invitation — that one was already sent.
+    await prisma.invitation.deleteMany({ where: { id: invitation.id, status: "pending" } });
+    throw err;
+  }
 
   await logAuditEvent(prisma, {
     organizationId: actor.organizationId,

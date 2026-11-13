@@ -6,7 +6,6 @@ import { inputBase, primaryButtonBase, secondaryButtonBase } from "../components
 import {
   BellIcon,
   ChevronRightIcon,
-  CopyIcon,
   DocumentIcon,
   FolderIcon,
   FolderMoveIcon,
@@ -45,6 +44,7 @@ import {
   type QuickView,
   type SearchFilter,
 } from "../lib/search";
+import { CopyButton } from "../components/CopyButton";
 import { ApiRequestError } from "../lib/api";
 import { fetchDepartment, fetchDepartments } from "../lib/departments";
 import {
@@ -293,7 +293,7 @@ export function DepartmentWorkspacePage() {
     const canAdminister = access.permissions["members.change_role"] === true;
     return (
       <div className="mx-auto max-w-xl px-6 py-24 text-center">
-        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-subtle">
+        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-tint text-primary">
           <LockIcon size={22} />
         </span>
         <h1 className="mt-6 text-[24px] font-bold tracking-[-0.4px] text-ink">
@@ -456,7 +456,12 @@ export function DepartmentWorkspacePage() {
               activeFilterCount ? "border-primary text-primary" : ""
             }`}
           >
-            <SlidersIcon size={15} /> Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
+            <SlidersIcon size={15} /> Filters
+            {activeFilterCount > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[12px] font-semibold tabular-nums text-white">
+                {activeFilterCount}
+              </span>
+            )}
           </button>
         )}
         {/* The needs-details queue is department-wide — a real attention signal, styled as an alert
@@ -640,7 +645,7 @@ export function DepartmentWorkspacePage() {
             </form>
           ) : (
             <>
-              <h1 className="text-[30px] font-bold leading-[1.15] tracking-[-0.6px] text-ink">
+              <h1 className="text-[30px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink">
                 {current?.name ?? department.name}
               </h1>
               {current?.isConfidential && (
@@ -649,11 +654,13 @@ export function DepartmentWorkspacePage() {
                 </span>
               )}
               {current?.legalHold && <LegalHoldBadge inherited={current.legalHold === "inherited"} />}
+              {/* Pushes the folder's actions to the right edge, away from its name and badges. */}
+              <span className="flex-1" aria-hidden="true" />
               {current?.isConfidential && (
                 <button
                   type="button"
                   onClick={() => setManageFolderId(current.id)}
-                  className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-primary hover:bg-primary-tint"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13.5px] font-medium text-ink shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:border-[#CDD3CF] hover:bg-surface-muted"
                 >
                   Manage access
                 </button>
@@ -663,7 +670,7 @@ export function DepartmentWorkspacePage() {
                   type="button"
                   onClick={() => setPermsFolderId(current.id)}
                   title="Restrict a role's access to this folder"
-                  className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-primary hover:bg-primary-tint"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13.5px] font-medium text-ink shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:border-[#CDD3CF] hover:bg-surface-muted"
                 >
                   Folder access
                 </button>
@@ -673,7 +680,7 @@ export function DepartmentWorkspacePage() {
                   type="button"
                   onClick={() => setHoldFolderId(current.id)}
                   title="Stop everything in this folder from being deleted"
-                  className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-warning hover:bg-warning-tint"
+                  className="rounded-lg border border-warning/30 bg-surface px-3 py-1.5 text-[13.5px] font-medium text-warning shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:bg-warning-tint"
                 >
                   Place Legal Hold
                 </button>
@@ -702,7 +709,7 @@ export function DepartmentWorkspacePage() {
                   <button
                     type="button"
                     onClick={() => setConfirmLiftHold(true)}
-                    className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-warning hover:bg-warning-tint"
+                    className="rounded-lg border border-warning/30 bg-surface px-3 py-1.5 text-[13.5px] font-medium text-warning shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors hover:bg-warning-tint"
                   >
                     Lift hold
                   </button>
@@ -717,7 +724,7 @@ export function DepartmentWorkspacePage() {
                   }}
                   aria-label="Rename folder"
                   title="Rename this folder"
-                  className="rounded-md p-1.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
+                  className="rounded-lg p-2 text-muted transition-colors hover:bg-surface-muted hover:text-primary"
                 >
                   <PencilIcon size={15} />
                 </button>
@@ -728,7 +735,7 @@ export function DepartmentWorkspacePage() {
                   onClick={() => setMovingFolderId(current.id)}
                   aria-label="Move folder"
                   title="Move this folder"
-                  className="rounded-md p-1.5 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
+                  className="rounded-lg p-2 text-muted transition-colors hover:bg-surface-muted hover:text-primary"
                 >
                   <FolderMoveIcon size={16} />
                 </button>
@@ -746,7 +753,7 @@ export function DepartmentWorkspacePage() {
                       );
                     })
                   }
-                  className="rounded-md p-1.5 text-subtle transition-colors hover:bg-danger-tint hover:text-danger"
+                  className="rounded-lg p-2 text-muted transition-colors hover:bg-danger-tint hover:text-danger"
                 >
                   <TrashIcon size={16} />
                 </button>
@@ -754,7 +761,7 @@ export function DepartmentWorkspacePage() {
             </>
           )}
         </div>
-        <p className="mt-1.5 text-[14.5px] text-muted">
+        <p className="mt-2 text-[15px] text-muted">
           {folderId
             ? `${documents?.length ?? 0} document${(documents?.length ?? 0) === 1 ? "" : "s"}` +
               (currentChildren.length
@@ -818,7 +825,7 @@ export function DepartmentWorkspacePage() {
             {/* Confidentiality: offered only where it's a real choice. Under a confidential parent the
                 new folder is always confidential (inherited), so we say so rather than offer a toggle. */}
             {createParentConfidential ? (
-              <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-accent">
+              <p className="mt-3 flex items-center gap-1.5 text-[13.5px] text-warning">
                 <LockIcon size={13} /> Inside a confidential folder — this will be confidential too.
               </p>
             ) : (
@@ -831,7 +838,7 @@ export function DepartmentWorkspacePage() {
                     className="h-4 w-4 rounded border-line text-primary focus:ring-primary"
                   />
                   <span className="flex items-center gap-1.5">
-                    <LockIcon size={13} className="text-accent" /> Make this a confidential folder
+                    <LockIcon size={13} className="text-warning" /> Make this a confidential folder
                   </span>
                 </label>
                 {createConfidential && (
@@ -879,7 +886,7 @@ export function DepartmentWorkspacePage() {
         ) : isShareView ? (
           <div className="mt-6">
             <div className="mb-3 flex items-center gap-3">
-              <h2 className="text-[15px] font-semibold text-ink">{QUICK_VIEW_LABELS[quickView!]}</h2>
+              <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-ink">{QUICK_VIEW_LABELS[quickView!]}</h2>
               <button
                 type="button"
                 onClick={clearSearch}
@@ -914,14 +921,17 @@ export function DepartmentWorkspacePage() {
             <div className="mt-6 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
               <table className="w-full border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-line bg-surface-muted">
-                    <th className="px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">
+                  <tr className="border-b border-line-muted bg-surface-muted/70">
+                    <th className="px-6 py-3 text-[13px] font-medium text-subtle">
                       Document
                     </th>
-                    <th className="hidden px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle sm:table-cell">
+                    <th className="hidden px-6 py-3 text-[13px] font-medium text-subtle sm:table-cell">
                       Type
                     </th>
-                    <th className="hidden px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle sm:table-cell">
+                    <th className="hidden px-6 py-3 text-[13px] font-medium text-subtle lg:table-cell">
+                      Uploaded
+                    </th>
+                    <th className="hidden px-6 py-3 text-right text-[13px] font-medium text-subtle sm:table-cell">
                       Size
                     </th>
                     <th className="px-6 py-3.5" />
@@ -930,29 +940,21 @@ export function DepartmentWorkspacePage() {
                 <tbody>
                   {documents.map((doc) => (
                     <tr key={doc.id} className="border-b border-line-muted last:border-b-0 hover:bg-surface-muted/50">
-                      <td className="px-6 py-4">
-                        <div className="flex items-start gap-3">
-                          <FileTypeIcon mimeType={doc.mimeType} fileName={doc.fileName} className="mt-0.5 h-9 w-9" />
+                      <td className="px-6 py-3.5">
+                        <div className="flex items-center gap-3.5">
+                          <FileTypeIcon mimeType={doc.mimeType} fileName={doc.fileName} className="h-10 w-10" />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="plate px-2 py-0.5">{doc.documentRef}</span>
-                              {doc.legalHold && <LegalHoldBadge compact />}
-                              <button
-                                type="button"
-                                aria-label="Copy document ID"
-                                title="Copy ID"
-                                onClick={() => void navigator.clipboard?.writeText(doc.documentRef)}
-                                className="rounded p-1 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
-                              >
-                                <CopyIcon size={13} />
-                              </button>
-                            </div>
                             <Link
                               to={`/documents/${doc.id}`}
-                              className="mt-1 block truncate text-[14.5px] font-medium text-ink hover:text-primary hover:underline"
+                              className="block truncate text-[15px] font-medium text-ink transition-colors hover:text-primary"
                             >
                               {doc.titleValue ?? doc.fileName ?? "Untitled"}
                             </Link>
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="plate px-2 py-0.5">{doc.documentRef}</span>
+                              <CopyButton text={doc.documentRef} className="p-1" />
+                              {doc.legalHold && <LegalHoldBadge compact />}
+                            </div>
                             {versionMsg?.id === doc.id && (
                               <p className={`mt-1 text-[12.5px] ${versionMsg.ok ? "text-subtle" : "text-danger"}`}>
                                 {versionMsg.text}
@@ -961,39 +963,49 @@ export function DepartmentWorkspacePage() {
                           </div>
                         </div>
                       </td>
-                      <td className="hidden px-6 py-4 text-[14px] text-muted sm:table-cell">{doc.documentType}</td>
-                      <td className="hidden px-6 py-4 text-[14px] text-muted sm:table-cell">
+                      <td className="hidden px-6 py-3.5 sm:table-cell">
+                        <span className="inline-flex rounded-md bg-surface-muted px-2 py-0.5 text-[13.5px] text-muted">
+                          {doc.documentType}
+                        </span>
+                      </td>
+                      <td className="hidden whitespace-nowrap px-6 py-3.5 text-[14.5px] tabular-nums text-muted lg:table-cell">
+                        {formatDay(doc.uploadedAt)}
+                      </td>
+                      <td className="hidden whitespace-nowrap px-6 py-3.5 text-right text-[14.5px] tabular-nums text-muted sm:table-cell">
                         {humanFileSize(doc.fileSize)}
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="flex items-center justify-end gap-4">
+                      <td className="px-4 py-3.5 text-right">
+                        <span className="flex items-center justify-end gap-1">
                           {canUploadVersion && (
                             <button
                               type="button"
                               onClick={() => triggerVersionUpload(doc.id)}
-                              className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-muted hover:text-primary hover:underline"
+                              aria-label="Upload a new version"
+                              title="Upload a new version"
+                              className="rounded-lg p-2 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
                             >
-                              <RefreshIcon size={14} /> New version
+                              <RefreshIcon size={16} />
                             </button>
                           )}
                           {/* A held document can't be deleted (RET-6) — the server refuses it too. */}
                           {canDeleteDoc && !doc.legalHold && (
                             <button
                               type="button"
+                              aria-label="Move to trash"
                               title="Move to trash"
                               onClick={() =>
                                 void deleteDocument(doc.id).then(() => void refreshAfterUpload())
                               }
-                              className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-muted hover:text-danger hover:underline"
+                              className="rounded-lg p-2 text-subtle transition-colors hover:bg-danger-tint hover:text-danger"
                             >
-                              <TrashIcon size={14} /> Delete
+                              <TrashIcon size={16} />
                             </button>
                           )}
                           <Link
                             to={`/documents/${doc.id}`}
-                            className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-primary hover:underline"
+                            className="ml-1 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary-tint"
                           >
-                            Open <ChevronRightIcon size={13} />
+                            Open <ChevronRightIcon size={14} />
                           </Link>
                         </span>
                       </td>
@@ -1004,11 +1016,11 @@ export function DepartmentWorkspacePage() {
             </div>
           ) : (
             <div className="mt-6 flex flex-col items-center rounded-2xl border border-dashed border-line bg-surface px-6 py-16 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-subtle">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-tint text-primary">
                 <DocumentIcon size={22} />
               </span>
-              <p className="mt-5 text-[16px] font-semibold text-ink">No documents here yet</p>
-              <p className="mt-1.5 max-w-md text-[14px] text-subtle">
+              <p className="mt-5 text-[17px] font-semibold text-ink">No documents here yet</p>
+              <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted">
                 {canUploadAny
                   ? `Drop files anywhere in this folder, or use “Add ${subject.toLowerCase()}”.`
                   : "Nothing here yet, and your role doesn't include uploading."}
@@ -1026,13 +1038,13 @@ export function DepartmentWorkspacePage() {
           )
         ) : (
           <div className="mt-6 flex flex-col items-center rounded-2xl border border-dashed border-line bg-surface px-6 py-16 text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-subtle">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-tint text-primary">
               <FolderIcon size={22} />
             </span>
             {folders.length === 0 ? (
               <>
-                <p className="mt-5 text-[16px] font-semibold text-ink">No folders yet</p>
-                <p className="mt-1.5 max-w-md text-[14px] text-subtle">
+                <p className="mt-5 text-[17px] font-semibold text-ink">No folders yet</p>
+                <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted">
                   {canCreateFolder
                     ? "Create a folder to start organising this department's documents."
                     : "Nothing here yet, and your role doesn't include creating folders."}
@@ -1052,8 +1064,8 @@ export function DepartmentWorkspacePage() {
               </>
             ) : (
               <>
-                <p className="mt-5 text-[16px] font-semibold text-ink">Choose a folder to see its files</p>
-                <p className="mt-1.5 max-w-md text-[14px] text-subtle">
+                <p className="mt-5 text-[17px] font-semibold text-ink">Choose a folder to see its files</p>
+                <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted">
                   Pick a folder from the sidebar to view its documents
                   {canUploadAny ? `, or add ${subject.toLowerCase()}s straight away.` : "."}
                 </p>
@@ -1074,9 +1086,8 @@ export function DepartmentWorkspacePage() {
         )}
 
         {!searchActive && folderId && documents && documents.length > 0 && (
-          <p className="mt-6 flex items-start gap-2.5 rounded-xl bg-surface-muted px-4 py-3 text-[13px] leading-relaxed text-subtle">
-            <DocumentIcon size={16} className="mt-0.5 shrink-0" />
-            Open a document to preview it, edit its details, see its version history, and download it.
+          <p className="mt-4 px-1 text-[13.5px] text-subtle">
+            Open a document to preview it, edit its details, see its version history or download it.
           </p>
         )}
 
@@ -1171,6 +1182,10 @@ export function DepartmentWorkspacePage() {
   );
 }
 
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 const QUICK_VIEW_LABELS: Record<QuickView, string> = {
   recent: "Recent",
   uploaded_by_me: "Uploaded by me",
@@ -1205,7 +1220,7 @@ function SearchResultsView({
   return (
     <div className="mt-6">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h2 className="text-[15px] font-semibold text-ink">{label}</h2>
+        <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-ink">{label}</h2>
         <span className="text-[13.5px] text-subtle">
           {loading ? "Searching…" : `${results.length} result${results.length === 1 ? "" : "s"}`}
         </span>
@@ -1216,11 +1231,11 @@ function SearchResultsView({
 
       {results.length === 0 && !loading ? (
         <div className="flex flex-col items-center rounded-2xl border border-dashed border-line bg-surface px-6 py-14 text-center">
-          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-subtle">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-tint text-primary">
             <SearchIcon size={22} />
           </span>
-          <p className="mt-5 text-[16px] font-semibold text-ink">No matches</p>
-          <p className="mt-1.5 max-w-md text-[14px] text-subtle">
+          <p className="mt-5 text-[17px] font-semibold text-ink">No matches</p>
+          <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted">
             Nothing here matches. Try fewer words, or adjust the filters.
           </p>
         </div>
@@ -1228,10 +1243,10 @@ function SearchResultsView({
         <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="border-b border-line bg-surface-muted">
-                <th className="px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle">Document</th>
-                <th className="hidden px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle md:table-cell">Type</th>
-                <th className="hidden px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-subtle md:table-cell">Folder</th>
+              <tr className="border-b border-line-muted bg-surface-muted/70">
+                <th className="px-6 py-3 text-[13px] font-medium text-subtle">Document</th>
+                <th className="hidden px-6 py-3 text-[13px] font-medium text-subtle md:table-cell">Type</th>
+                <th className="hidden px-6 py-3 text-[13px] font-medium text-subtle md:table-cell">Folder</th>
                 <th className="px-6 py-3.5" />
               </tr>
             </thead>
@@ -1239,39 +1254,35 @@ function SearchResultsView({
               {results.map((doc) => (
                 <tr key={doc.id} className="border-b border-line-muted last:border-b-0 hover:bg-surface-muted/50">
                   <td className="px-6 py-4">
-                    <div className="flex items-start gap-3">
-                      <FileTypeIcon mimeType={doc.mimeType} fileName={doc.fileName} className="mt-0.5 h-9 w-9" />
+                    <div className="flex items-center gap-3.5">
+                      <FileTypeIcon mimeType={doc.mimeType} fileName={doc.fileName} className="h-10 w-10" />
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="plate px-2 py-0.5">{doc.documentRef}</span>
-                          {doc.legalHold && <LegalHoldBadge compact />}
-                          <button
-                            type="button"
-                            aria-label="Copy document ID"
-                            title="Copy ID"
-                            onClick={() => void navigator.clipboard?.writeText(doc.documentRef)}
-                            className="rounded p-1 text-subtle transition-colors hover:bg-surface-muted hover:text-primary"
-                          >
-                            <CopyIcon size={13} />
-                          </button>
-                        </div>
                         <Link
                           to={`/documents/${doc.id}`}
-                          className="mt-1 block truncate text-[14.5px] font-medium text-ink hover:text-primary hover:underline"
+                          className="block truncate text-[15px] font-medium text-ink transition-colors hover:text-primary"
                         >
                           {doc.titleValue ?? doc.fileName ?? "Untitled"}
                         </Link>
+                        <div className="mt-1 flex items-center gap-1">
+                          <span className="plate px-2 py-0.5">{doc.documentRef}</span>
+                          <CopyButton text={doc.documentRef} className="p-1" />
+                          {doc.legalHold && <LegalHoldBadge compact />}
+                        </div>
                       </div>
                     </div>
                   </td>
-                  <td className="hidden px-6 py-4 text-[14px] text-muted md:table-cell">{doc.documentType}</td>
-                  <td className="hidden px-6 py-4 text-[14px] text-muted md:table-cell">{doc.folderName ?? "—"}</td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="hidden px-6 py-3.5 md:table-cell">
+                    <span className="inline-flex rounded-md bg-surface-muted px-2 py-0.5 text-[13.5px] text-muted">
+                      {doc.documentType}
+                    </span>
+                  </td>
+                  <td className="hidden px-6 py-3.5 text-[14.5px] text-muted md:table-cell">{doc.folderName ?? "—"}</td>
+                  <td className="px-4 py-3.5 text-right">
                     <Link
                       to={`/documents/${doc.id}`}
-                      className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-primary hover:underline"
+                      className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary-tint"
                     >
-                      Open <ChevronRightIcon size={13} />
+                      Open <ChevronRightIcon size={14} />
                     </Link>
                   </td>
                 </tr>
