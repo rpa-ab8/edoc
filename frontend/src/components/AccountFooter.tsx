@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiRequest } from "../lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiRequestError, apiRequest } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
 import { ChevronDownIcon, LogoutIcon } from "./icons";
 
@@ -24,6 +25,8 @@ export function AccountFooter() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const multiOrg = organizations.length > 1;
 
@@ -31,6 +34,7 @@ export function AccountFooter() {
     setOrgMenuOpen(false);
     if (id === currentOrganizationId) return;
     setSwitching(true);
+    setSwitchError(null);
     try {
       const result = await apiRequest<{ accessToken: string }>("/auth/select-organization", {
         method: "POST",
@@ -38,8 +42,15 @@ export function AccountFooter() {
       });
       useAuthStore.getState().setAccessToken(result.accessToken);
       useAuthStore.getState().selectOrganization(id);
+      // Everything cached (departments, folders, permissions…) belongs to the organization being
+      // left. Without clearing it, landing on "/" reads the old department list, redirects straight
+      // back into a department that doesn't exist in the new organization, and the page hangs on
+      // "Opening workspace…". Same rule SelectOrganizationPage follows.
+      queryClient.clear();
       // Land on "/" — the previous URL may point into a department that doesn't exist in the new org.
       navigate("/");
+    } catch (err) {
+      setSwitchError(err instanceof ApiRequestError ? err.message : "Couldn't switch organization. Try again.");
     } finally {
       setSwitching(false);
     }
@@ -89,6 +100,12 @@ export function AccountFooter() {
             </ul>
           )}
         </div>
+      )}
+
+      {switchError && (
+        <p role="alert" className="mb-2 rounded-lg bg-danger-tint px-3 py-2 text-[13.5px] leading-snug text-[#A31B1B]">
+          {switchError}
+        </p>
       )}
 
       {confirmingLogout ? (

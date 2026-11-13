@@ -3139,3 +3139,23 @@ Still to do in Brevo (not code): authorise this machine's IP at app.brevo.com/se
 and the production server's IP before go-live. The pending invitation for the misspelled address
 `vidhugovindofficoal@gmail.com` (Legal, Staff, 2026-11-13) predates this fix — revoke it on the
 Members page.
+
+## 2026-11-13 — Fix: switching organization could leave a blank "Opening workspace…" page
+
+Cause: the sidebar's organization switch (`AccountFooter.switchOrg`) changed the token and organization
+but kept React Query's cache. Landing on `/` then read the *previous* organization's cached department
+list and redirected straight back into that department, which doesn't exist in the new organization,
+so the workspace waited forever on "Opening workspace…". `SelectOrganizationPage` already cleared the
+cache for exactly this reason (its comment says so); the sidebar switch never did.
+
+- `components/AccountFooter.tsx`: `queryClient.clear()` after the switch, before navigating to `/`.
+  A failed switch now shows a message in the sidebar instead of failing silently.
+- `pages/DepartmentWorkspacePage.tsx`: when the department list has loaded and the URL's department
+  isn't in it (a tab or link from another organization, or a removed department) it shows "This
+  department isn't available" with a "Go to my workspace" button, instead of the endless loading text.
+
+Reproduced and verified in Chrome with the Abate / Ajilan Personal accounts: before the fix Ajilan
+Personal → Abate hung on "Opening workspace…" with the old URL; after it, both directions land on
+the other organization's workspace, and opening the other organization's department URL shows the
+new message. `tsc -b` + ESLint clean. Not tested: switching while on the Super Admin pages, or a
+failed switch (server error) message.

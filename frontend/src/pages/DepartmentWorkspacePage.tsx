@@ -318,6 +318,24 @@ export function DepartmentWorkspacePage() {
     );
   }
 
+  // The department list has loaded and this URL's department isn't in it: a link or tab left over
+  // from another organization, or a department that was removed. Say so and offer a way out —
+  // waiting on the loading message below would never end.
+  if (departments && !department) {
+    return (
+      <div className="mx-auto max-w-xl px-6 py-24 text-center">
+        <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-ink">This department isn't available</h1>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted">
+          It may belong to a different organization, or it may have been removed. Your own departments
+          are one click away.
+        </p>
+        <button type="button" onClick={() => navigate("/")} className={`${primaryButtonBase} mt-7 px-6`}>
+          Go to my workspace
+        </button>
+      </div>
+    );
+  }
+
   if (!department || !folders || !access) {
     return <div className="p-10 text-[14.5px] text-muted">Opening workspace…</div>;
   }
