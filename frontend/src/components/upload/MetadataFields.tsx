@@ -1,4 +1,5 @@
 import { inputBase } from "../AuthCard";
+import { DatePicker } from "../DatePicker";
 import { Select } from "../Select";
 import type { DraftField } from "../../lib/departments";
 
@@ -63,9 +64,11 @@ export function MetadataFields({
                 ]}
                 onChange={(v) => onChange(id, v)}
               />
+            ) : field.fieldType === "date" ? (
+              <DatePicker value={value} label={field.label} onChange={(v) => onChange(id, v)} />
             ) : (
               <input
-                type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
+                type={field.fieldType === "number" ? "number" : "text"}
                 className={`${inputBase} w-full`}
                 value={value}
                 placeholder={placeholderFor(field)}

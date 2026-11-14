@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { daysBetween, formatCalendarDate } from "../lib/retention";
 import { ArrowRightIcon, CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, XIcon } from "./icons";
+import { GridChoice, NavButton } from "./CalendarParts";
+import { MONTHS, MONTHS_SHORT, WEEKDAYS, WEEK_START, isDate, parse, shift, withMonth, ymd } from "../lib/calendarDates";
 
 /**
  * A date-range field with its own calendar, replacing a pair of native `<input type="date">`s.
@@ -19,52 +21,6 @@ import { ArrowRightIcon, CalendarIcon, ChevronDownIcon, ChevronLeftIcon, Chevron
 
 type End = "from" | "to";
 type View = "days" | "months" | "years";
-
-const pad = (n: number) => String(n).padStart(2, "0");
-const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
-
-function parse(value: string): Date {
-  const [y, m, d] = value.split("-").map(Number);
-  return new Date(y!, m! - 1, d!);
-}
-
-function shift(value: string, days: number): string {
-  const d = parse(value);
-  d.setDate(d.getDate() + days);
-  return ymd(d);
-}
-
-/** The same day in another month, pulled back to that month's last day if it has fewer. */
-function withMonth(value: string, year: number, month: number): string {
-  const last = new Date(year, month + 1, 0).getDate();
-  return ymd(new Date(year, month, Math.min(Number(value.slice(8)), last)));
-}
-
-/** 0 = Sunday … 6 = Saturday, from the browser's locale; Monday where the locale doesn't say. */
-function localeWeekStart(): number {
-  try {
-    const locale = new Intl.Locale(navigator.language) as Intl.Locale & {
-      getWeekInfo?: () => { firstDay: number };
-      weekInfo?: { firstDay: number };
-    };
-    const firstDay = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
-    if (firstDay) return firstDay % 7;
-  } catch {
-    // An unrecognised locale tag — fall through to Monday.
-  }
-  return 1;
-}
-
-const WEEK_START = localeWeekStart();
-const MONTHS = Array.from({ length: 12 }, (_, m) => new Date(2000, m, 1).toLocaleDateString(undefined, { month: "long" }));
-const MONTHS_SHORT = Array.from({ length: 12 }, (_, m) =>
-  new Date(2000, m, 1).toLocaleDateString(undefined, { month: "short" }),
-);
-// 1 Jan 2023 was a Sunday, so day k of that week is weekday k.
-const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
-  new Date(2023, 0, 1 + ((WEEK_START + i) % 7)).toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2),
-);
 
 const PRESETS: { label: string; range: (today: string) => [string, string] }[] = [
   { label: "Today", range: (t) => [t, t] },
@@ -569,46 +525,5 @@ export function DateRangePicker({
           document.body,
         )}
     </>
-  );
-}
-
-function NavButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-[#C9D2CD] hover:bg-surface-muted hover:text-ink"
-    >
-      {children}
-    </button>
-  );
-}
-
-function GridChoice({
-  selected,
-  current,
-  onClick,
-  children,
-}: {
-  selected: boolean;
-  current: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-12 rounded-xl text-[14px] transition-colors ${
-        selected
-          ? "bg-primary font-semibold text-white shadow-action hover:bg-primary-dark"
-          : current
-            ? "font-semibold text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary-tint"
-            : "font-medium text-ink hover:bg-surface-muted"
-      }`}
-    >
-      {children}
-    </button>
   );
 }
