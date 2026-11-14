@@ -8,19 +8,20 @@ This chapter is the developer's map of the production system and what code chang
 
 ## 1. Production topology
 
-One server (DigitalOcean `s-4vcpu-8gb`, Ubuntu 24.04), everything in Docker Compose
+One server (DigitalOcean `s-2vcpu-4gb`, Ubuntu 24.04; image OCR off — `s-4vcpu-8gb` if it's ever enabled), everything in Docker Compose
 (`docker-compose.prod.yml`, project name `dms-prod`). Only `web` publishes ports.
 
 | Service | Image / command | Depends on | Notes |
 |---|---|---|---|
 | `web` | `frontend/Dockerfile` → Caddy 2.8 serving `dist` | api | Ports 80/443 (+443/udp). TLS via ACME, security headers, `/api/*` → `api:4000` (prefix stripped), SPA fallback, 130 MB body cap. |
 | `api` | `backend/Dockerfile` → `node dist/index.js` (user `node`, uid 1000) | migrate ✓, redis healthy | Healthcheck `GET /health` every 15 s. `NODE_ENV=production`, `TRUST_PROXY=true`. |
-| `worker` | same image → `node dist/worker/ocr.worker.js` | | OCR. |
+| `worker` | same image → `node dist/worker/ocr.worker.js` | | PDF text extraction; image OCR only when `OCR_IMAGES_ENABLED=true` (off in prod). |
 | `retention-worker` | same image → `node dist/worker/retention.worker.js` | | Daily 02:00 `RETENTION_JOB_TIME_ZONE`. |
 | `migrate` | same image → `npx prisma migrate deploy` | postgres healthy | One-shot; api/workers wait for it to complete. |
 | `postgres` | `postgres:16-alpine`, volume `postgres_data` | | Not published. |
 | `redis` | `redis:7-alpine`, `--requirepass`, AOF on, volume `redis_data` | | Not published. |
-| `backup` | `deploy/backup` (postgres:16-alpine + aws cli + cron) | postgres healthy | `pg_dump -Fc` to `./backups`, prune after `BACKUP_KEEP_DAYS`, optional copy to an S3 bucket. |
+| `backup` | `deploy/backup` (postgres:16-alpine + aws cli + age + curl + cron) | postgres healthy | `pg_dump -Fc` → `pg_restore --list` + size check → `age` encrypt → `./backups` (prune after `BACKUP_KEEP_DAYS`) → off-site S3/B2 copy (required when `BACKUP_REQUIRE_OFFSITE=true`) + encrypted manifest → healthcheck ping. |
+| `data-guard` | same backend image → `node dist/worker/data-guard.js` | migrate ✓ | Daily `DATA_GUARD_TIME_UTC` (01:30): writes `./backups/manifest-*.jsonl.gz` (storage ref → version/document/folder), then re-hashes a sample of stored objects against `Version.checksum`. Mounts `./backups`; its `volumes:` replaces the anchor's, so NAS must be added explicitly. |
 | `uptime-kuma` | `louislam/uptime-kuma:1`, profile `monitoring` | | `127.0.0.1:3001` only — reach over an SSH tunnel. |
 
 The backend services share the `x-backend` anchor: env file `.env.production`, `DATABASE_URL` and `REDIS_URL`
@@ -55,12 +56,21 @@ tenant-isolation and access-matrix suites → Docker image builds.
 
 ## 4. Backups and restore
 
-- **What's in a backup**: the whole database (users, metadata, versions, permissions, audit trail). **Not** the
-  document files — those live in R2 (or the NAS, which needs its own backup).
-- **Restore** (`deploy/backup/restore.sh`): `pg_restore --clean --if-exists --no-owner --single-transaction`.
-  Stop `api worker retention-worker` first. The audit append-only trigger is part of the dump and comes back with
-  it; `--clean` drops and recreates tables (it doesn't DELETE rows), so the trigger doesn't block a restore.
-- Rehearse quarterly on a scratch server.
+Full design, failure matrix and restore procedures: **`docs/DMS_Data_Protection_and_Restore.md`**.
+
+- **What's in a database backup:** the whole database (users, metadata, versions, permissions, audit trail).
+  Document files are covered separately, by a host-cron `rclone` replica of the R2 bucket to B2 (Deployment
+  Guide Part 10). The `data-guard` manifest ties the two together without the database.
+- **Restore** (`deploy/backup/restore.sh`): decrypts `*.age` with `BACKUP_AGE_IDENTITY`, then
+  `pg_restore --clean --if-exists --no-owner --single-transaction`. Stop `api worker retention-worker data-guard`
+  first. The audit append-only trigger is part of the dump and comes back with it; `--clean` drops and recreates
+  tables (it doesn't DELETE rows), so the trigger doesn't block a restore.
+- **Code-level guarantees:**
+  - `StorageDriver.put` takes `ObjectMeta`. R2 stores it as object metadata and sends `ChecksumSHA256`, and the
+    NAS writes temp → fsync → rename.
+  - `destroyTrashedDocument` deletes rows before files, so a failure leaves an orphan object (logged), never a
+    dangling row. Keep both properties when touching storage or purge code.
+- Restore drill monthly (Data Protection doc §6).
 
 ## 5. Monitoring and logs
 

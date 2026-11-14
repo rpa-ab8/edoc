@@ -67,7 +67,22 @@ export class NasDriver implements StorageDriver {
   async put(key: string, data: Buffer): Promise<string> {
     const target = this.resolveKey(key);
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, data);
+    // Atomic, durable write: temp file → fsync → rename, so a crash mid-write never leaves a
+    // truncated file at the final path that a database row then points at.
+    const tmp = `${target}.${randomUUID()}.partial`;
+    try {
+      const handle = await fs.open(tmp, "w");
+      try {
+        await handle.writeFile(data);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await fs.rename(tmp, target);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
     return key; // storage_ref — opaque, backend-agnostic
   }
 

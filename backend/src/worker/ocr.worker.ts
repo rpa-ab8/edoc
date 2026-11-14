@@ -53,7 +53,12 @@ async function extractText(mimeType: string, fileName: string, buffer: Buffer): 
   // Text files are normally stored with their text at upload and never queued; handled here too so a
   // re-queued or legacy version still ends up searchable.
   if (format.ocr === "text") return extractPlainText(buffer);
-  return format.ocr === "image" ? extractImageText(buffer) : extractPdfText(buffer);
+  if (format.ocr === "image") {
+    // Image OCR is off by default (OCR_IMAGES_ENABLED). Uploads don't queue images then; this also
+    // covers a job queued before the switch, so Tesseract never loads on the small production server.
+    return env.OCR_IMAGES_ENABLED ? extractImageText(buffer) : "";
+  }
+  return extractPdfText(buffer);
 }
 
 const worker = new Worker<OcrJobData>(
@@ -86,7 +91,9 @@ const worker = new Worker<OcrJobData>(
   { connection: createQueueConnection(env), concurrency: 2 },
 );
 
-worker.on("ready", () => console.log("[ocr] worker ready, waiting for jobs"));
+worker.on("ready", () =>
+  console.log(`[ocr] worker ready, waiting for jobs (PDF text: on, image OCR: ${env.OCR_IMAGES_ENABLED ? "ON" : "off"})`),
+);
 worker.on("completed", (job) => console.log(`[ocr] processed version ${job.data.versionId}`));
 worker.on("failed", (job, err) => console.error(`[ocr] job error for ${job?.data.versionId}:`, err?.message));
 

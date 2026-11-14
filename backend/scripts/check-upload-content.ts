@@ -29,6 +29,8 @@ import { buildApp } from "../src/app.js";
 import { signAccessToken } from "../src/lib/jwt.js";
 import { encryptJson } from "../src/lib/crypto.js";
 import { permissionMapFrom } from "../src/lib/permissions.js";
+import { OCR_QUEUE_NAME, createQueueConnection } from "../src/lib/queue.js";
+import { Queue } from "bullmq";
 
 const prisma = new PrismaClient();
 const env = { ...loadEnv(), MAX_CONCURRENT_UPLOADS: 8, MAX_CONCURRENT_UPLOADS_PER_USER: 1 };
@@ -115,6 +117,29 @@ try {
     const id = json(res).document?.id ?? "";
     if (!firstDocId) firstDocId = id;
     check(`control: ${name} is accepted and stored as ${expect.split("/")[1].slice(0, 24)}`, res.statusCode === 201 && (await storedMime(id)) === expect, `${res.statusCode} ${res.body.slice(0, 120)} → ${await storedMime(id)}`);
+  }
+
+  // Image OCR switch (OCR_IMAGES_ENABLED, off by default and in production): with it off an image is
+  // stored `done` with no text and never queued, so Tesseract can't start; PDFs are always queued for
+  // their embedded text. With it on (run as OCR_IMAGES_ENABLED=true), images are pending + queued.
+  console.log(`\n── image OCR switch (OCR_IMAGES_ENABLED=${env.OCR_IMAGES_ENABLED}) ──`);
+  {
+    const ocrQueue = new Queue(OCR_QUEUE_NAME, { connection: createQueueConnection(env) });
+    const jobs = await ocrQueue.getJobs(["waiting", "delayed", "active", "completed", "failed", "paused", "prioritized"], 0, 5000);
+    const queued = new Set(jobs.map((j) => (j.data as { versionId?: string })?.versionId));
+    const latest = await prisma.version.findMany({ where: { organizationId: org.id }, select: { id: true, mimeType: true, ocrStatus: true } });
+    const images = latest.filter((v) => v.mimeType.startsWith("image/"));
+    const pdfs = latest.filter((v) => v.mimeType === "application/pdf");
+    const imagesOk = env.OCR_IMAGES_ENABLED
+      ? images.every((v) => v.ocrStatus === "pending" && queued.has(v.id))
+      : images.every((v) => v.ocrStatus === "done" && !queued.has(v.id));
+    check(
+      env.OCR_IMAGES_ENABLED ? "image OCR on: images are pending and queued" : "image OCR off: images are done and never queued for Tesseract",
+      images.length >= 2 && imagesOk,
+      images.map((v) => `${v.mimeType}:${v.ocrStatus}:queued=${queued.has(v.id)}`).join(", "),
+    );
+    check("PDFs are still queued for text extraction either way", pdfs.length >= 1 && pdfs.every((v) => v.ocrStatus === "pending" && queued.has(v.id)), pdfs.map((v) => `${v.ocrStatus}:queued=${queued.has(v.id)}`).join(", "));
+    await ocrQueue.close();
   }
 
   console.log("\n── disguised or fake files are refused, and nothing is stored ──");

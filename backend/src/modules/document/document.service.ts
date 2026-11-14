@@ -1200,19 +1200,10 @@ export async function destroyTrashedDocument(
     targetDescription: by.auditDescription,
   });
 
-  // Delete the stored files first. A restore path reuses a version's storage_ref (never a fresh
-  // copy), so distinct refs are the unit to delete; failures are swallowed so a missing object can't
-  // strand a purge, but usage is only reverted for what we attempted.
-  const driver = await getActiveStorageDriver(deps, document.organizationId);
-  const seenRefs = new Set<string>();
-  let freedBytes = 0;
-  for (const v of versions) {
-    if (seenRefs.has(v.storageRef)) continue;
-    seenRefs.add(v.storageRef);
-    freedBytes += v.fileSize;
-    await driver.delete(v.storageRef).catch(() => {});
-  }
-
+  // Database rows first, stored files second. If the transaction fails nothing has been lost; if a
+  // file delete fails afterwards the result is a harmless orphan object (logged, found by the
+  // data-guard scrub) — never a database row pointing at a file that is already gone.
+  const driver = await getActiveStorageDriver(deps, document.organizationId); // before any change, so a config problem aborts cleanly
   await prisma.$transaction(async (tx) => {
     await tx.fieldValue.deleteMany({ where: { documentId: document.id } });
     await tx.share.deleteMany({ where: { documentId: document.id } });
@@ -1223,6 +1214,23 @@ export async function destroyTrashedDocument(
     await tx.version.deleteMany({ where: { documentId: document.id } });
     await tx.document.delete({ where: { id: document.id } });
   });
+
+  // A restore path reuses a version's storage_ref (never a fresh copy), so distinct refs are the
+  // unit to delete. Usage is reverted only for what was actually deleted.
+  const seenRefs = new Set<string>();
+  let freedBytes = 0;
+  for (const v of versions) {
+    if (seenRefs.has(v.storageRef)) continue;
+    seenRefs.add(v.storageRef);
+    try {
+      await driver.delete(v.storageRef);
+      freedBytes += v.fileSize;
+    } catch (err) {
+      console.error(
+        `[purge] orphan object left behind: org=${document.organizationId} ref=${v.storageRef} (${(err as Error).message})`,
+      );
+    }
+  }
 
   if (freedBytes > 0) {
     await prisma.storageConfig

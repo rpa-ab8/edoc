@@ -15,7 +15,7 @@
 - Backend: Node.js + TypeScript, Fastify, Zod, Prisma
 - Database: PostgreSQL (JSONB for permission matrices, tsvector for search)
 - Queue/cache: Redis + BullMQ
-- OCR: Tesseract (self-hosted)
+- OCR: Tesseract (self-hosted) — image OCR is built but **off in production** (`OCR_IMAGES_ENABLED=false`, 2 vCPU / 4 GB server); PDF text extraction always runs
 - Auth: JWT access tokens + server-side refresh tokens (self-built, no third-party provider)
 - Storage: pluggable — NAS or Cloudflare R2 behind a storage abstraction interface
 

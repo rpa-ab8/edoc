@@ -5,8 +5,8 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
-import { randomUUID } from "node:crypto";
-import type { StorageDriver, TestConnectionResult } from "./types.js";
+import { createHash, randomUUID } from "node:crypto";
+import type { ObjectMeta, StorageDriver, TestConnectionResult } from "./types.js";
 
 export interface R2Config {
   endpoint: string;
@@ -85,13 +85,23 @@ export class R2Driver implements StorageDriver {
     return { success: true };
   }
 
-  async put(key: string, data: Buffer, contentType?: string): Promise<string> {
+  async put(key: string, data: Buffer, contentType?: string, meta?: ObjectMeta): Promise<string> {
+    // S3 user metadata is ASCII-only, so values are URI-encoded (decode with decodeURIComponent).
+    const Metadata: Record<string, string> = {};
+    for (const [k, v] of Object.entries(meta ?? {})) {
+      if (v) Metadata[k.toLowerCase()] = encodeURIComponent(v);
+    }
+    // R2 verifies the bytes it received against this digest and rejects the write on a mismatch,
+    // so a corrupted-in-transit upload can never be recorded as stored.
+    const ChecksumSHA256 = createHash("sha256").update(data).digest("base64");
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.config.bucket,
         Key: key,
         Body: data,
         ContentType: contentType,
+        Metadata,
+        ChecksumSHA256,
       }),
     );
     return key;

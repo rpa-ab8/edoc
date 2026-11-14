@@ -73,10 +73,11 @@ function validateFile(env: Env, file: IncomingFile) {
   return verdict.format;
 }
 
-/** Only images and PDFs go to the OCR worker; Office files have no text pass, and text files carry
- *  their own text, stored at upload. */
-function needsOcr(format: AcceptedFormat): boolean {
-  return format.ocr === "image" || format.ocr === "pdf";
+/** Only PDFs (embedded-text extraction) and — when OCR_IMAGES_ENABLED — images (Tesseract) go to the
+ *  worker; Office files have no text pass, and text files carry their own text, stored at upload.
+ *  With image OCR off, an image is stored as `done` with no text: searchable by name and metadata. */
+function needsOcr(env: Env, format: AcceptedFormat): boolean {
+  return format.ocr === "pdf" || (format.ocr === "image" && env.OCR_IMAGES_ENABLED);
 }
 
 /**
@@ -84,9 +85,9 @@ function needsOcr(format: AcceptedFormat): boolean {
  * text, so it is stored now (status `done`) and the document is fully searchable without the OCR
  * worker; formats the worker handles start `pending`; Office files are `done` with no text.
  */
-function ocrFields(format: AcceptedFormat, data: Buffer): { ocrStatus: "pending" | "done"; ocrText?: string | null } {
+function ocrFields(env: Env, format: AcceptedFormat, data: Buffer): { ocrStatus: "pending" | "done"; ocrText?: string | null } {
   if (format.ocr === "text") return { ocrStatus: "done", ocrText: extractPlainText(data) || null };
-  return { ocrStatus: needsOcr(format) ? "pending" : "done" };
+  return { ocrStatus: needsOcr(env, format) ? "pending" : "done" };
 }
 
 /**
@@ -96,7 +97,12 @@ function ocrFields(format: AcceptedFormat, data: Buffer): { ocrStatus: "pending"
 async function storeBytes(deps: Deps, actor: PermissionActor, file: IncomingFile, mimeType: string) {
   const driver = await storageService.getActiveStorageDriver(deps, actor.organizationId);
   const key = `${actor.organizationId}/${randomUUID()}`;
-  const storageRef = await driver.put(key, file.data, mimeType);
+  const storageRef = await driver.put(key, file.data, mimeType, {
+    organizationId: actor.organizationId,
+    fileName: file.fileName,
+    sha256: createHash("sha256").update(file.data).digest("hex"),
+    uploadedBy: actor.userId,
+  });
   await storageService.recordStorageUsage(deps, actor.organizationId, file.data.length);
   return { driver, storageRef };
 }
@@ -160,11 +166,11 @@ export async function uploadDocument(deps: Deps, actor: PermissionActor, input: 
           fileSize: input.file.data.length,
           mimeType: canonicalMime,
           checksum,
-          ...ocrFields(format, input.file.data),
+          ...ocrFields(deps.env, format, input.file.data),
         },
         changeNote: input.changeNote ?? null,
       });
-      if (needsOcr(format) && document.currentVersionId) {
+      if (needsOcr(deps.env, format) && document.currentVersionId) {
         await enqueueOcr(deps.env, document.currentVersionId);
       }
       return { action: "new_version" as const, document };
@@ -190,11 +196,11 @@ export async function uploadDocument(deps: Deps, actor: PermissionActor, input: 
         fileSize: input.file.data.length,
         mimeType: canonicalMime,
         checksum,
-        ...ocrFields(format, input.file.data),
+        ...ocrFields(deps.env, format, input.file.data),
       },
       allowIncomplete: true,
     });
-    if (needsOcr(format) && document.currentVersionId) {
+    if (needsOcr(deps.env, format) && document.currentVersionId) {
       await enqueueOcr(deps.env, document.currentVersionId);
     }
     return { action: "created" as const, document };
@@ -226,11 +232,11 @@ export async function uploadNewVersion(
         fileSize: file.data.length,
         mimeType: canonicalMime,
         checksum,
-        ...ocrFields(format, file.data),
+        ...ocrFields(deps.env, format, file.data),
       },
       changeNote: changeNote ?? null,
     });
-    if (needsOcr(format) && document.currentVersionId) {
+    if (needsOcr(deps.env, format) && document.currentVersionId) {
       await enqueueOcr(deps.env, document.currentVersionId);
     }
     return { document };

@@ -1,5 +1,7 @@
 # Edoc — Production Budget Plan (DigitalOcean `s-4vcpu-8gb`)
 
+> **Superseded (2026-11-11).** Image OCR was taken out of Release 1, and the current budget is the *Edoc Production Budget* doc: a 2 vCPU / 4 GB server at about $42/month all-in. This file is kept as the costing **with** OCR, if it's ever turned on.
+
 **Prepared:** 2026-10-17 · **Load:** 1 organization, up to 250 users, ~50 concurrent, files < 100 MB (limit 120 MB)
 
 **Server (chosen):** DigitalOcean Basic Droplet, Regular CPU — 4 vCPU · 8 GB RAM · 160 GB disk · 5 TB bandwidth (`s-4vcpu-8gb`), with OCR (Tesseract) enabled.

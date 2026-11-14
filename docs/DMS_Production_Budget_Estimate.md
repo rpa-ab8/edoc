@@ -1,5 +1,7 @@
 # Edoc — Production Server & Running-Cost Estimate
 
+> **Superseded (2026-11-11).** This estimate assumed image OCR and a 4 vCPU / 8 GB server. The current budget is the *Edoc Production Budget* doc: a 2 vCPU / 4 GB DigitalOcean server with image OCR off, Backblaze B2 off-site copies, ≈ $42/month. Kept for the provider comparison only.
+
 **Prepared:** 2026-10-17 · **Basis:** the stated load in the PRD / Tech Stack doc — one organization, up to **250 users, ~50 concurrent**, files typically under 100 MB (limit 120 MB).
 
 > **Read this first.** Hetzner repriced its cloud on 15 June 2026 and sources disagree on the exact numbers (see Sources). Every price below is an **estimate to be confirmed on the provider's pricing page** before you commit. Storage volume is an **assumption** — the docs give no document count, so three scenarios are shown.

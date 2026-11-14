@@ -75,6 +75,8 @@ Already decided in the product design — included here for completeness.
 |---|---|---|
 | Engine | Tesseract (open source, self-hosted) | Cloud OCR services (AWS Textract, Google Vision) charge per page — at meaningful document volumes this becomes a real recurring cost. Tesseract is free and runs on the same server, at the cost of somewhat lower accuracy on poor scans than the paid cloud options. |
 
+> **Production decision (2026-11-11):** image OCR (Tesseract on JPG/PNG) is built but switched **off** in production (`OCR_IMAGES_ENABLED=false`), so the server can be 2 vCPU / 4 GB (budget ≈ $42/month). PDF embedded text, Markdown and plain text stay content-searchable; images are searchable by name, document ID and metadata only. Turning it on later = resize the server + one setting.
+
 **Recommendation:** start with Tesseract; if OCR accuracy on real documents proves inadequate for a specific department (common with poor-quality scans), revisit a paid API for that case specifically rather than by default.
 
 ### 3.6 Background jobs
@@ -111,7 +113,7 @@ Already decided in the product design (JWT + server-side refresh tokens, self-ho
 
 | Component | Choice | Reasoning |
 |---|---|---|
-| Server | A single mid-tier VPS (e.g. Hetzner, DigitalOcean) — 4 vCPU / 8GB RAM class | Sized comfortably above the stated load; Hetzner in particular offers strong price-to-performance for this tier |
+| Server | A single VPS (DigitalOcean) — **2 vCPU / 4 GB (`s-2vcpu-4gb`) with image OCR off** (decision 2026-11-11); 4 vCPU / 8 GB only if image OCR is enabled | Sized comfortably above the stated load; Hetzner in particular offers strong price-to-performance for this tier |
 | Orchestration | Docker Compose | One file defining backend, Postgres, Redis, and a reverse proxy — simple to operate without container-orchestration overhead |
 | Reverse proxy / TLS | Caddy or Nginx + Let's Encrypt | Free automatic HTTPS |
 | Static frontend | Served by the same reverse proxy | No separate frontend hosting bill |
@@ -128,7 +130,7 @@ Already decided in the product design (JWT + server-side refresh tokens, self-ho
 | Uptime monitoring | Uptime Kuma (self-hosted) | Free, simple, sufficient for one internal deployment |
 | Error tracking | Sentry free tier | 5,000 errors/month free — enough for this scale |
 | Logs | Container logs + basic log rotation | A dedicated log-aggregation service (Datadog, etc.) is not justified at this scale |
-| Backups | Scheduled `pg_dump` to object storage (R2) + NAS's own backup if applicable | Database backup is the priority; document files are already durable in their storage backend |
+| Backups | Nightly verified, `age`-encrypted `pg_dump` to a second provider (Backblaze B2, no-delete key); a daily off-DB manifest (storage key → document/file/folder) and checksum scrub (`data-guard`); a nightly `rclone` replica of the R2 documents bucket to B2 (deletions kept 90 days); Healthchecks.io dead-man's-switch alerts | The database is the only map from opaque storage keys to documents, so neither half is useful alone. Every off-site copy is at a different provider, and can't be erased from the server. Full design: `docs/DMS_Data_Protection_and_Restore.md` |
 
 ### 3.11 CI/CD
 

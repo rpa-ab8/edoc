@@ -24,6 +24,10 @@ x-backend: &backend
     TRUST_PROXY: "true"
     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    # Image OCR (Tesseract) stays OFF in production: it needs the larger 4 vCPU / 8 GB server, which
+    # the approved budget doesn't include. PDF text extraction (the `worker` service) is unaffected.
+    # Only "true" turns it on — and only together with a server resize.
+    OCR_IMAGES_ENABLED: ${OCR_IMAGES_ENABLED:-false}
   logging: *logging
   # NAS storage only: mount the share at the same path the storage config uses, in api AND worker,
   # and set STORAGE_NAS_ROOT=/mnt/dms-nas in .env.production (NAS is refused without it).
@@ -91,6 +95,29 @@ services:
       redis:
         condition: service_healthy
 
+  # Disaster-recovery guard: daily writes an off-DB manifest (storage ref → file/document/folder) into
+  # ./backups (backup.sh encrypts and ships it off-site) and re-hashes a sample of stored files against
+  # the database checksums. Set DATA_GUARD_HEALTHCHECK_URL for a dead-man's-switch alert.
+  data-guard:
+    <<: *backend
+    restart: unless-stopped
+    command: ["node", "dist/worker/data-guard.js"]
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "true"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      OCR_IMAGES_ENABLED: ${OCR_IMAGES_ENABLED:-false}
+      DATA_GUARD_DIR: /backups
+      DATA_GUARD_HEALTHCHECK_URL: ${DATA_GUARD_HEALTHCHECK_URL:-}
+    # This list replaces x-backend's volumes, so with NAS storage also add the NAS mount here
+    # (e.g. - /mnt/dms-nas:/mnt/dms-nas), or the scrub can't read the files.
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   # Applies pending Prisma migrations, then exits. api/worker wait for it to succeed.
   migrate:
     <<: *backend
@@ -145,6 +172,12 @@ services:
       BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
       BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-dms}
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      # Off-site copy is mandatory in production: a run with no BACKUP_S3_BUCKET fails and alerts.
+      BACKUP_REQUIRE_OFFSITE: ${BACKUP_REQUIRE_OFFSITE:-true}
+      # age public key (age1…) — encrypts dumps before they leave the server. Keep the private key offline.
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      # Dead-man's-switch (Healthchecks.io / Uptime Kuma push URL): pinged on success, /fail on failure.
+      BACKUP_HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:-}
       AWS_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: auto

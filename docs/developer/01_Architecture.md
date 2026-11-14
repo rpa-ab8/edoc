@@ -23,8 +23,12 @@ flowchart LR
   W2 --> P
   W2 --> ST
   A -- transactional mail --> M[Brevo API]
-  BK[backup container<br/>pg_dump cron] --> P
-  BK -. optional .-> OFF[(off-site S3 bucket)]
+  DG[data-guard<br/>daily manifest + scrub] --> P
+  DG --> ST
+  BK[backup container<br/>pg_dump cron, age-encrypted] --> P
+  BK --> OFF[(off-site B2 backups bucket)]
+  RP[host cron rclone<br/>nightly replica] -. read-only .-> ST
+  RP --> REP[(B2 documents replica)]
 ```
 
 | Process | Entry point | Run with (dev) | Prod service |
@@ -34,7 +38,8 @@ flowchart LR
 | Retention worker | `backend/src/worker/retention.worker.ts` | `npm run worker:retention:dev --workspace backend` (or `retention:run-once`) | `retention-worker` |
 | Migrations | `prisma migrate deploy` | `npm run prisma:migrate --workspace backend` (dev) | `migrate` (one-shot, before api/workers) |
 | Web | `frontend/` (Vite) | `npm run dev --workspace frontend` | `web` (Caddy serving the build + proxying `/api`) |
-| Backup | `deploy/backup/` | — | `backup` (cron `pg_dump`) |
+| Backup | `deploy/backup/` | — | `backup` (cron `pg_dump` → verify → `age` → off-site) |
+| Data guard | `backend/src/worker/data-guard.ts` | `npx tsx src/worker/data-guard.ts --once` (with `DATA_GUARD_DIR` set) | `data-guard` (daily manifest + checksum scrub) |
 | Uptime | Uptime Kuma | — | `uptime-kuma` (only with `--profile monitoring`, bound to 127.0.0.1:3001) |
 
 ## 2. Technology
@@ -48,7 +53,7 @@ flowchart LR
 | Queue | BullMQ on Redis (ioredis) | bullmq 5, Redis 7 |
 | Auth | jsonwebtoken (HS256 access JWT) + opaque refresh tokens; argon2id passwords | — |
 | Storage | `@aws-sdk/client-s3` (R2) or `node:fs` (NAS), behind `StorageDriver` | — |
-| OCR | tesseract.js (images), pdf-parse (PDF text) | tesseract.js 7, pdf-parse 2 |
+| OCR | pdf-parse (PDF text, always); tesseract.js (images, only when `OCR_IMAGES_ENABLED=true` — off in production) | tesseract.js 7, pdf-parse 2 |
 | Mail | Brevo transactional API over `fetch` (console fallback) | — |
 | Frontend | React + TypeScript + Vite, React Router, TanStack Query, Zustand, Tailwind; react-markdown + remark-gfm (safe Markdown preview) | React 19, Router 7, Query 5, Zustand 5, Tailwind 3, Vite 6, react-markdown 10.1.0, remark-gfm 4.0.1 |
 | Reverse proxy | Caddy (TLS, security headers, static files) | 2.8 |
@@ -61,7 +66,7 @@ Reasoning for each choice: `docs/DMS_Technology_Stack.md`.
 <repo root>/                 (checked out at C:/apps/DMS on the dev machine)
 ├── package.json                npm workspaces: backend, frontend
 ├── docker-compose.yml          dev: postgres (host 5433) + redis (6379) only
-├── docker-compose.prod.yml     prod: web, api, worker, retention-worker, migrate, postgres, redis, backup, uptime-kuma
+├── docker-compose.prod.yml     prod: web, api, worker, retention-worker, data-guard, migrate, postgres, redis, backup, uptime-kuma
 ├── .env.example                dev env template (copy to .env at repo root)
 ├── .env.production.example     prod env template
 ├── .github/workflows/ci.yml    lint, typecheck, build, migrations, isolation suites

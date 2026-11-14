@@ -71,7 +71,7 @@ cp .env.example .env              # single shared .env, read by docker-compose, 
 5. **Optional workers** (separate terminals):
 
    ```bash
-   npm run worker:dev --workspace backend             # OCR, so scanned files become searchable
+   npm run worker:dev --workspace backend             # text extraction: PDFs always; images only with OCR_IMAGES_ENABLED=true
    npm run worker:retention:dev --workspace backend   # daily auto-delete + Trash purge (02:00 IST)
    npm run retention:run-once --workspace backend     # run the retention job once, now, and exit
    ```

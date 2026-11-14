@@ -67,6 +67,7 @@ Everything not required to satisfy that sentence is deferred. Two consequences w
 - Supported formats: PDF, images (JPEG/PNG), DOCX, XLSX, Markdown (.md/.markdown) and plain text (.txt) — the last two added 2026-11-07 by the product owner.
 - Maximum upload size configured with margin above 100 MB; OCR subject to a page ceiling.
 - **OCR** on scans and PDFs so document *content* is searchable.
+  > **Production decision (2026-11-11):** image OCR (Tesseract on JPG/PNG) is built but switched **off** in production (`OCR_IMAGES_ENABLED=false`), so the server can be 2 vCPU / 4 GB (budget ≈ $42/month). PDF embedded text, Markdown and plain text stay content-searchable; images are searchable by name, document ID and metadata only. Turning it on later = resize the server + one setting.
 - *Deferred:* auto-extraction of field values with confidence tiers.
 
 ### 3.5 Search and retrieval

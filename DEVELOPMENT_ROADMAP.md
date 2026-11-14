@@ -729,8 +729,11 @@ viewer 12 · sharing 39 · confidential 29 · trash 19 · audit 15 · tenant-iso
 filters 19 · rename 137`.
 
 **Next up:** the **first production deploy** — follow `deploy/README.md` (needs: domain, droplet,
-Brevo sender domain, R2 bucket for documents and a separate one for backups). Budget/server sizing:
-`docs/DMS_Budget_Plan_s-4vcpu-8gb.md`.
+Brevo sender domain, an R2 bucket for documents; Backblaze B2 for off-site backups and the file
+replica). Updated 2026-11-11: follow `docs/DMS_Deployment_Guide.md` (Parts 0–13, including Part 10's
+data-protection go-live checks). Server: `s-2vcpu-4gb` with **image OCR off** (`OCR_IMAGES_ENABLED=false`).
+Budget: the *Edoc Production Budget* doc (≈ $42/month). `docs/DMS_Budget_Plan_s-4vcpu-8gb.md` is the
+superseded with-OCR plan. Data protection design + restore procedures: `docs/DMS_Data_Protection_and_Restore.md`.
 
 - [x] 2026-10-17: **member browser-verification pass done** (Dept Admin + Super Admin, *Ajilan
   Personal* org): upload byte-path, search-inside-file, viewer, versions/restore, sharing + external

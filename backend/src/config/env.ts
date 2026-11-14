@@ -62,6 +62,13 @@ const envSchema = z.object({
   MAX_CONCURRENT_UPLOADS_PER_USER: z.coerce.number().int().positive().default(2),
   // PDF page ceiling for OCR — an oversized scan is skipped rather than allowed to stall the queue.
   OCR_MAX_PAGES: z.coerce.number().int().positive().default(50),
+  // Image OCR (Tesseract) — OFF unless explicitly "true"/"1". It is the CPU/RAM-heavy part and is out
+  // of scope for the first production release (budget: 2 vCPU / 4 GB server). PDF embedded-text
+  // extraction is unaffected. Turning it on later needs the larger server (see the budget doc).
+  OCR_IMAGES_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 
   // Daily retention run (RET-3): auto-delete into trash, then the automatic trash purge. Run by the
   // retention worker (`npm run worker:retention`). Local wall-clock time HH:MM in the given zone.

@@ -79,7 +79,7 @@ sequenceDiagram
   end
   O->>Q: take job
   O->>S: get(storageRef)
-  O->>O: Tesseract (image) / pdf-parse (PDF)
+  O->>O: pdf-parse (PDF) / Tesseract (image, only if OCR_IMAGES_ENABLED)
   O->>A: (DB) version.ocrText, ocrStatus=done; refresh search vector
 ```
 

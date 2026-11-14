@@ -86,6 +86,7 @@ Validated at start-up by `backend/src/config/env.ts` (zod). An invalid value pri
 | `MAX_CONCURRENT_UPLOADS` | `8` | Upload slots per API process (memory bound ≈ slots × max size). |
 | `MAX_CONCURRENT_UPLOADS_PER_USER` | `2` | Upload slots per user. |
 | `OCR_MAX_PAGES` | `50` | Max PDF pages the OCR worker parses. |
+| `OCR_IMAGES_ENABLED` | off | Tesseract OCR on JPG/PNG. Off unless `true`/`1`: images are stored `ocrStatus=done` with no text and never queued. PDF text extraction is unaffected. Production keeps it off (server sized without it). |
 | `RETENTION_JOB_TIME` | `02:00` | Daily retention run, `HH:MM` 24-hour. |
 | `RETENTION_JOB_TIME_ZONE` | `Asia/Kolkata` | Zone of the run time (each org's own zone decides its "today"). |
 | `BREVO_API_KEY` | unset | Brevo transactional mail. Unset → mail is logged to the console. |
@@ -103,7 +104,9 @@ Validated at start-up by `backend/src/config/env.ts` (zod). An invalid value pri
 | `TRUSTED_PROXIES` | Caddy | Upstream proxies whose `X-Forwarded-For`/`CF-Connecting-IP` Caddy trusts. |
 | `HTTP_PORT`, `HTTPS_PORT` | prod compose | Published ports (80/443). |
 | `BACKUP_CRON`, `BACKUP_KEEP_DAYS` | backup | Schedule (UTC, default `0 2 * * *`) and local retention (14 days). |
-| `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_ENDPOINT`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | backup | Optional off-site copy. |
+| `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_ENDPOINT`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | backup | Off-site copy (B2 in production). |
+| `BACKUP_REQUIRE_OFFSITE`, `BACKUP_AGE_RECIPIENT`, `BACKUP_HEALTHCHECK_URL`, `BACKUP_MIN_BYTES` | backup | Fail without an off-site copy (prod default `true`); age public key for encryption; dead-man's-switch URL; smallest acceptable dump. |
+| `DATA_GUARD_TIME_UTC`, `DATA_GUARD_SCRUB_SAMPLE`, `DATA_GUARD_KEEP_DAYS`, `DATA_GUARD_DIR`, `DATA_GUARD_HEALTHCHECK_URL` | data-guard | Daily manifest + scrub (01:30 UTC, 200 files/org, 14 days, `/backups`). See `docs/DMS_Data_Protection_and_Restore.md`. |
 | `IMAGE_TAG`, `ENV_FILE` | prod compose | Image tag, env file (default `.env.production`). |
 
 ### 4.3 Frontend

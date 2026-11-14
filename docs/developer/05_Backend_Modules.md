@@ -252,5 +252,5 @@ with `audit.view_confidential_audit`; export needs `audit.export_audit`; CSV lim
 
 | Worker | Behaviour |
 |---|---|
-| `worker/ocr.worker.ts` | BullMQ `ocr`, concurrency 2. Loads the version, reads bytes through the storage driver, extracts text (Tesseract for images, pdf-parse for PDFs up to `OCR_MAX_PAGES`, none for Office), caps at 1,000,000 chars, writes `ocrStatus`/`ocrText`, refreshes the search vector. Any failure → `ocrStatus = failed` (not retried; the document stays searchable by metadata). |
+| `worker/ocr.worker.ts` | BullMQ `ocr`, concurrency 2. Loads the version, reads bytes through the storage driver, extracts text (Tesseract for images only when `OCR_IMAGES_ENABLED=true` — off in production and never queued then; pdf-parse for PDFs up to `OCR_MAX_PAGES`, none for Office), caps at 1,000,000 chars, writes `ocrStatus`/`ocrText`, refreshes the search vector. Any failure → `ocrStatus = failed` (not retried; the document stays searchable by metadata). |
 | `worker/retention.worker.ts` | Registers one job scheduler (`daily-retention`, cron from `RETENTION_JOB_TIME` in `RETENTION_JOB_TIME_ZONE`) and runs `runDailyRetention`, concurrency 1, no automatic retry. `--once` runs immediately without Redis and exits. |
