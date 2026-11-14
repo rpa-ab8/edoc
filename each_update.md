@@ -3464,4 +3464,11 @@ uptime monitor; whether the DigitalOcean Uptime check exists is still to be conf
 - `docs/developer/09_Deployment_and_Operations.md`: links the runbook; monitoring line updated; rclone note.
 - `docs/DMS_Production_Details.md`: a status summary at the top (live, what's proven, what's still open, where things are).
 No code changed.
+
+## 2026-11-14 — Docs: handover file for developers and the organization
+
+New `docs/DMS_Documentation_Handover.md`: which documents developers read (in the GitHub repo, in order), which ones
+the organization keeps as PDF copies outside GitHub, and which secrets go only in the password manager (with at
+least two people having access, and the age private key also on a USB stick). Linked from `docs/developer/README.md`
+together with `DMS_Production_Details.md`. No code changed.
 No code changed.

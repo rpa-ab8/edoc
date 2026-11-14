@@ -35,6 +35,8 @@ Also: **[API Reference](../API_Reference.md)** — every endpoint, request, resp
 | `DMS_Data_Model.md` | Entities and fields (the Prisma schema follows it) | Naming |
 | `DMS_Technology_Stack.md` | Library / hosting choices and why | Stack |
 | `DMS_Deployment_Guide.md` | Step-by-step production server setup | Ops runbook |
+| `DMS_Production_Details.md` | What is live now, and the deployment history (no secrets) | Production record |
+| `DMS_Documentation_Handover.md` | Which documents and secrets are kept where, for developers and the organization | Handover |
 | `../SECURITY_AUDIT.md` | Security findings and their fix status | Security |
 | `../each_update.md` | Chronological log of every change | History |
 | `../DEVELOPMENT_ROADMAP.md` | Module-by-module build plan | Planning |
