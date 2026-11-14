@@ -57,6 +57,8 @@ tenant-isolation and access-matrix suites → Docker image builds.
 ## 4. Backups and restore
 
 Full design, failure matrix and restore procedures: **`docs/DMS_Data_Protection_and_Restore.md`**.
+Copy-paste runbook for the live system (real bucket names, the proven monthly drill, every restore scenario):
+**[11 — Backup and restore](11_Backup_and_Restore.md)**. The live deployment's record is `docs/DMS_Production_Details.md`.
 
 - **What's in a database backup:** the whole database (users, metadata, versions, permissions, audit trail).
   Document files are covered separately, by a host-cron `rclone` replica of the R2 bucket to B2 (Deployment
@@ -78,7 +80,9 @@ Full design, failure matrix and restore procedures: **`docs/DMS_Data_Protection_
 - Logs: `dc logs -f api` (Fastify JSON logs; `debug` level in dev, `info` in prod), `dc logs worker`,
   `dc logs retention-worker` (one summary line per daily run: moved, held, failed, purged), `dc logs web`
   (Caddy JSON access log).
-- Uptime Kuma (optional profile) for external checks; DigitalOcean alerts for CPU/memory/disk.
+- External uptime: DigitalOcean Uptime on `/api/health` (production); Uptime Kuma (optional profile) is the self-hosted
+  alternative. DigitalOcean alerts for CPU/memory/disk; Healthchecks.io for the three nightly jobs.
+- The host-cron replica needs **rclone ≥ 1.73** (Backblaze accepts only login API v4); Ubuntu's apt package is too old.
 
 ## 6. Troubleshooting
 

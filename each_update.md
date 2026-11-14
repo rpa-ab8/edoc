@@ -3228,3 +3228,240 @@ weekly droplet backups. No code changed.
   guide/developer docs; (2) the in-app date picker; (3) the deployment records and this file. `master` was
   fast-forwarded to it and tagged `v1.0.0`. `backend/_backfill.mts` (a one-off local scratch script with a
   hard-coded path) was left out on purpose.
+
+## 2026-11-14 — Deployment: GitHub repo named
+
+The user created the company repo `rpa-ab8/edoc` (HTTPS `https://github.com/rpa-ab8/edoc.git`, SSH
+`git@github.com:rpa-ab8/edoc.git`). The repo name is `edoc`, not the guide's `dms`; the server still clones
+it into `~/dms` because the `dc` alias and the compose paths use that folder. Recorded in
+`docs/DMS_Production_Details.md` (worksheet, names table, open decision 2 settled) and `PRODUCTION.local.md`.
+Nothing pushed yet — that is the user's step. These record-keeping edits are deliberately left uncommitted
+until after the push, so the `v1.0.0` that gets pushed is exactly the commit that was tested. No code changed.
+
+## 2026-11-14 — Deployment: code pushed to GitHub (guide Part 1 done)
+
+The user pushed `master` and tag `v1.0.0` to `rpa-ab8/edoc`. Checked from the PC with `git ls-remote`: both
+point at `6cd195e`, the commit that was type-checked and scanned. Added §7 to
+`docs/DMS_Production_Details.md`, "Things the guide doesn't say", collecting gaps to fold into the guide at
+the end — notably that Brevo's "Authorised IPs" must include the server IP `168.144.112.26` or production
+can't send email (noted earlier on 2026-11-13, but never in the guide). The record-keeping edits are still
+uncommitted on purpose. No code changed.
+
+## 2026-11-14 — Deployment: code on the server (guide 6.1–6.3) and DNS record (5.1)
+
+The user added a read-only deploy key to `rpa-ab8/edoc`, cloned the repo into `~/dms` on the droplet and checked
+out `v1.0.0`; `git log -1` on the server shows `6cd195e`, the same commit as GitHub. The user also created
+the DNS record `edoc.abateas.app` → `168.144.112.26`; checked from the PC, both 1.1.1.1 and 8.8.8.8 return the
+droplet's IP, so it is grey cloud. Recorded in `docs/DMS_Production_Details.md` and `PRODUCTION.local.md`.
+Still needed before `.env.production` (6.4): the B2 keys and endpoint, the age public key, the Healthchecks
+URLs and the Brevo API key. No code changed.
+
+## 2026-11-14 — Deployment: backup encryption key generated (guide 5.5)
+
+The user generated the age key pair. The public key (`age1ppm03…ksa`, in the details doc) is what goes in
+`BACKUP_AGE_RECIPIENT`. Checked that it matches the public half inside the private key file, without printing the
+secret line. The private key file is `C:\Users\Data Analyst\edoc-backup-age.key`, outside the repo (checked: no
+key file is tracked or untracked in it). Later the same day the user reported both copies saved (password
+manager and USB stick) and the file deleted from the PC; the deletion was checked (no copy left in the home
+folder, Downloads, Desktop, Documents or the repo). The key's contents are not recorded in any file. Guide
+5.5 is done. No code changed.
+
+## 2026-11-14 — Deployment: Backblaze walkthrough prepared (guide 5.4)
+
+The user asked for a Backblaze walkthrough. Checked the current Backblaze docs: the `b2 account authorize` and
+`b2 key create --bucket … <name> <capabilities>` commands in the guide are current. Added two items to
+`docs/DMS_Production_Details.md` §7 ("things the guide doesn't say"): never use "Days Till Hide" on the replica
+bucket (it would hide the current copies), and the free tier is 10 GB across both buckets. No code changed.
+
+## 2026-11-14 — Deployment: Backblaze buckets and no-delete keys done and checked (guide 5.4)
+
+The user created `edoc-bucket-prod-replica`, the lifecycle rules and two keys (`edoc-backups-prod`,
+`edoc-replica-prod`). The keys are in the gitignored `PRODUCTION.local.md`; the endpoint
+(`https://s3.eu-central-003.backblazeb2.com`) and bucket details are in `docs/DMS_Production_Details.md`.
+Checked from the PC with isolated, read-only sessions (nothing stored, temporary files removed): both keys
+sign in, each is limited to its own bucket, each has exactly the five permissions with no `deleteFiles`, neither
+is the master key; both buckets are private with default encryption; the lifecycle rules match the guide
+(backups: hide 90 / delete 30 after hiding; replica: keep prior versions 90, never hides current files).
+Not verifiable with these keys: Object Lock — the user should confirm "disabled" on the Backblaze site. No code changed.
+
+## 2026-11-14 — Deployment: Brevo domain authenticated, sender domain settled (guide 5.2, part)
+
+The user added `abateas.app` in Brevo and used the automatic Cloudflare authentication. DNS lookups from the PC
+confirm the records: Brevo code (TXT), two DKIM CNAMEs (grey cloud) and a monitoring-only DMARC record; the
+`edoc` A record is unchanged. The sender domain question is settled as `abateas.app` (`noreply@abateas.app`,
+which is also the code's default `EMAIL_FROM`). Still pending in Brevo: sender, production API key, and the
+server IP `168.144.112.26` in Authorised IPs. Recorded in `docs/DMS_Production_Details.md`. No code changed.
+
+## 2026-11-14 — Deployment: Brevo done (guide 5.2)
+
+The user reported Brevo finished (sender, authorised server IP) and sent the production API key, now in the
+gitignored `PRODUCTION.local.md`. Only its format was checked. It was not tested from the PC on purpose: Brevo
+blocks unknown IPs, so a failure from here would prove nothing and would trigger a "blocked IP" alert. The
+server tests the key and the IP together at guide 6.4. Remaining before `.env.production`: the three
+Healthchecks URLs. No code changed.
+
+## 2026-11-14 — Deployment: Healthchecks done (guide 5.6) — all of Part 5 now has its values
+
+The user created the three Healthchecks checks (`edoc-db-backup`, `edoc-data-guard`, `edoc-file-replica`) and
+sent the ping URLs, now in the gitignored `PRODUCTION.local.md`. Format checked; not pinged on purpose, so the
+checks stay silent until the real jobs run. Everything guide 6.4 needs is now in hand. Three small
+confirmations are still open: R2 token scope, B2 Object Lock, DigitalOcean alerts/backups. No code changed.
+
+## 2026-11-14 — Deployment: SSH timed out — the office network leaves through three different public IPs
+
+At the start of guide 6.4, `ssh` timed out. Not a server problem: the droplet answered on 80/443 while port 22
+was dropped by the firewall, whose SSH rule allowed one IP. First read as "the IP changed", but 30 samples from
+the PC showed the office gateway load-balances connections across **three** public IPs (listed in the
+gitignored `PRODUCTION.local.md`), chosen at random per connection, so a one- or two-IP rule fails some of the
+time. The fix was to allow all three in `dms-prod`'s SSH rule; the user did, and from the PC 25/25 probes and 6/6
+key logins then succeeded (resolved). Recorded in the details doc
+(log, guide gap 10) and `PRODUCTION.local.md`. No code changed.
+
+## 2026-11-14 — Deployment: `.env.production` created on the server (guide 6.4)
+
+The user ran the four 6.4 blocks: file created, four secrets generated on the server, the rest filled in,
+`CONFIG OK`, and the Brevo key test passed from the server (so the key and the allowed IP work). They saved the whole
+file in the password manager and sent the four generated secrets, now in the gitignored `PRODUCTION.local.md`.
+Verified from the PC without printing secrets: all 17 values match the records, the secrets have the right shape
+(the storage key decodes to exactly 32 bytes), file permissions 600, no empty settings, no containers running yet.
+Next: Part 7 (build and start). No code changed.
+
+## 2026-11-14 — Deployment: Edoc is live at https://edoc.abateas.app (guide Part 7)
+
+The user built the images and started everything on the droplet (release `v1.0.0`, commit `6cd195e`). All 8 services
+are up and healthy where they have health checks, migrations applied, image OCR off, retention and backup
+schedules registered, certificate issued. Verified independently from the PC: valid Let's Encrypt certificate
+(to 12 Feb 2027), 308 redirect from http, home page and `/api/health` OK, security headers present, and
+ports 5432/6379/4000/2019/8080 unreachable from outside. Recorded in the details doc (worksheet, Part 7 row,
+log). Next: Part 8 (invite code, Super Admin, organization, storage, first department). No code changed.
+
+## 2026-11-14 — Deployment: invite codes created (guide 8.1) — two, by accident
+
+The user ran the 8.1 insert twice, so the production database has two single-use invite codes (both active and
+unused when checked read-only). At the same time it already held 1 user and 0 organizations: the Super Admin
+account exists and the next step is creating the organization. Recorded the codes in `PRODUCTION.local.md`
+and added a clean-up step (deactivate the unused code after the organization exists; the signup code checks
+`active`) plus guide gap 11 to the details doc. No code changed.
+
+## 2026-11-14 — Deployment: organization, storage and first users done (guide Part 8)
+
+The user created the organization `ABATE`, passed the storage test, made the `IT` department, added a second user and
+uploaded a test file. Checked read-only on the server: 1 organization, 3 users (all email-verified, so Brevo
+delivered the emails), storage connection `verified`, 2 invitations accepted, 1 document with text extraction
+`done`, 14 audit events; all 8 services healthy, no API errors, memory about 1 GB of 3.8 GB. Still open: the
+spare invite code is active and must be deactivated (guide 8.6 clean-up). User emails are recorded in the
+gitignored `PRODUCTION.local.md`, not in the committed details doc. No code changed.
+
+## 2026-11-14 — Deployment: Part 9 verification done, spare invite code closed
+
+The user deactivated the spare invite code and tested all the Part 9 checks (all working). Read-only evidence from
+the server: spare code `active = f`; 1 document with 3 versions; 1 password-reset request; 2 shares; text
+extraction `done`; 23 audit events; all 8 services healthy; no API errors in 6 hours. Still to do in Part 9: the
+reboot check, after Part 10. The Part 10 commands were prepared with the real keys and checked (script syntax, every
+value against the records) before being given to the user. No code changed.
+
+## 2026-11-14 — Deployment: Part 10.1 done (rclone installed)
+
+The user installed `rclone` 1.60.1 on the droplet (`jq` was present) and confirmed the time zone is UTC. 4
+pending apt updates were left on purpose for the reboot check at the end of Part 10. Next: 10.2 to 10.5 (connect
+rclone, create and run the replica job, schedule it). No code changed.
+
+## 2026-11-14 — Deployment: Part 10.4 failed — Ubuntu's rclone is too old for Backblaze
+
+The read-only R2 token works (`rclone ls` listed the documents). The first replica run then failed with `This
+request is not currently supported on API version number 1`. Verified directly: Backblaze now rejects versions
+1–3 of `b2_authorize_account` and accepts only version 4 (HTTP 400 vs 200 with the replica key); rclone's source
+uses v1 up to 1.72.0 and v4 from 1.73.0; Ubuntu 24.04 ships 1.60.1. The `aws s3` backup path in `backup.sh` is not
+affected. Fix: install rclone 1.76.0 from rclone.org. Recorded as guide gap 12 (the guide's 10.1, the Data
+Protection and Restore doc and `deploy/README.md` all need updating at the end). The failed run also pinged
+Healthchecks `/fail`, so an alert email is expected. No code changed.
+
+## 2026-11-14 — Deployment: replica job works; why 2 stored files for 3 versions
+
+After upgrading to rclone 1.76.0 the replica run succeeded (log: start 13:13:48Z, ok 13:13:51Z) and R2 and the
+Backblaze replica hold the same 2 objects. The user asked why 2 files: read from the database, v1 and v2 are the
+same PDF uploaded twice (two stored files), and v3 "Restored from v1" is a new version row that points at v1's
+stored file (restore copies forward by reference; stored files are immutable). Not done yet: guide 10.5 (the nightly
+cron file did not exist) and 10.6 a–f. No code changed.
+
+## 2026-11-14 — Deployment: nightly replica schedule created (guide 10.5)
+
+The user created `/etc/cron.d/dms-replicate` (03:30 UTC daily). The first paste was garbled (commands pasted twice and
+merged); the second run wrote it correctly. Verified read-only: exactly one line, mode 644, owner root, cron
+service active, no stray files. The first scheduled run (03:30 UTC) hasn't happened yet, so it is not proven until
+the log and the Healthchecks page are checked afterwards. Next: guide 10.6 a–f. No code changed.
+
+## 2026-11-14 — Deployment: go-live checks 10.6 a and b passed
+
+The user ran the file inventory and scrub (3 versions, `3/3 verified`) and the encrypted off-site backup. Verified
+independently from the PC with the read-only-capable backups key: Backblaze holds the database backup (137,098
+bytes) and the manifest (756 bytes), both genuine age ciphertext (`age-encryption.org/v1`); on the server the
+backups folder is mode 700 and no age private key exists. Still to do: 10.6 c (keys can't delete), d (alerts fire),
+e (restore drill), f (droplet backups). No code changed.
+
+## 2026-11-14 — Deployment: go-live check 10.6 c passed (keys can't delete)
+
+The user uploaded a test file to the replica bucket with the replica key, then tried a hard delete: it failed on all
+3 attempts with `401 unauthorized`. So the off-site key can add files but cannot erase them, even from a taken-over
+server. The leftover `_delete-test.txt` is harmless (the nightly sync hides it; the 90-day rule removes it). Still to
+do: 10.6 d (alerts fire), e (restore drill), f (droplet backups). No code changed.
+
+## 2026-11-14 — Deployment: go-live check 10.6 d passed (alert email received)
+
+The user sent a failure ping for `edoc-db-backup` and received the Healthchecks alert email. Not confirmed: the second
+recipient also got it, and the follow-up success ping. Verified from the PC that the two test uploads in the replica
+bucket are both still present after the failed deletes. Read `deploy/backup/restore.sh` before preparing the restore
+drill (10.6 e): it restores into whatever `PGDATABASE` names, so the drill command carries a guard that refuses to run
+unless the target is `dms_drill`. Still to do: 10.6 e and f. No code changed.
+
+## 2026-11-14 — Deployment: first restore drill passed (guide 10.6 e)
+
+The user restored the off-site backup into a scratch database: `[restore] done`, and the counts matched live (1
+document, 3 versions, 23 audit events). A file pulled from the replica is a valid 18-page PDF whose sha256 equals
+the full checksum in the database, so replica, backup and database agree. Live data untouched. Cleanup checked
+read-only: scratch database dropped and the age private key is gone from the server, but two items are pending —
+the encrypted `drill.dump.age` on the server (a `rm` prompt swallowed the pasted cleanup lines) and the temporary
+key copy on the PC (`Remove-Item` was typed into the server by mistake). **Both were then cleaned up by the user and
+verified**: no age private key anywhere on the server (whole-disk search) or on the PC, only the database `dms`
+left, all 8 services healthy. Also checked the replica R2 token's scope: it cannot list buckets (403) but reads
+`edoc-bucket-prod`, consistent with being limited to it. Still to do: 10.6 f (droplet backups).
+
+## 2026-11-14 — Deployment: website confirmations done; uptime monitor to use DigitalOcean Uptime (11.1)
+
+The user reported four of the five website checks done: droplet weekly backups enabled (10.6 f), DigitalOcean alerts and
+billing alert (2.4), R2 read-and-write token scope, and Object Lock disabled on both Backblaze buckets. Not done:
+guide 11.1, the external uptime monitor. Checked the options: UptimeRobot's free plan terms for business use are
+disputed across sources, while DigitalOcean's own pricing page lists one free uptime check per month (1-minute
+checks, 4 regions, email alerts), so the recommendation is DigitalOcean Uptime. Added as guide gap 13 in the details
+doc. Remaining: 11.1, the Part 9 reboot check (also tests that monitor), watching the first scheduled nightly runs,
+then the guide/docs update and committing the record-keeping files. No code changed.
+
+## 2026-11-14 — Deployment: reboot check passed (Part 9, check 8)
+
+The user applied the 4 pending updates and rebooted the droplet. From the server's logs the host was down about 7 s and
+all 8 containers were running again 15 s after shutdown; from outside `/api/health` answers 200. Docker, cron, the
+replica cron file, `rclone.conf` and swap all survived, 0 updates pending, no API errors. The user got no alert email,
+which is expected (the outage is shorter than the usual "down for 2 minutes" rule), so the reboot did not test the
+uptime monitor; whether the DigitalOcean Uptime check exists is still to be confirmed. No code changed.
+
+## 2026-11-14 — Docs: deployment lessons folded in; new developer backup & restore runbook
+
+- New `docs/developer/11_Backup_and_Restore.md`: the production restore runbook with the real server and bucket names
+  (no secrets) — what is protected where and when (UTC and India time), access and tools, routine checks, the
+  monthly drill exactly as proven on 2026-11-14 (with the `dms_drill` guard and a SHA-256 check of a replica file),
+  every restore scenario (database on the same server, files back into R2, undo a purge, full rebuild including the
+  new-IP steps for DNS and Brevo, last-resort manifest recovery, lost secrets) and a table of the problems met.
+  Linked from `docs/developer/README.md`, chapter 09 and the Data Protection doc.
+- `docs/DMS_Deployment_Guide.md`: the 13 gaps from `docs/DMS_Production_Details.md` §7 — list every office IP in the
+  SSH rule; `-i` for non-default keys; the key-only `deploy` alternative; Brevo Authorised IPs (new 5.2 step 6) and
+  the sender-domain note; both Backblaze buckets, the 10 GB free tier, never "Days Till Hide" on the replica,
+  `b2 key list`; clone into `~/dms`; run 8.1 once and close spare invite codes in 8.6; **10.1 installs rclone ≥ 1.73
+  from rclone.org with a checksum check instead of apt**; failed-run alert and fewer-files-than-versions notes;
+  one-at-a-time drill cleanup; 11.1 now DigitalOcean Uptime (UptimeRobot's free terms are disputed); four new
+  troubleshooting rows; two checklist lines.
+- `docs/DMS_Data_Protection_and_Restore.md`: rclone ≥ 1.73 requirement (§3.6); `-i`/`chmod 600` for the key copy;
+  drill uses `-T`, the `dms_drill` guard, a checksum comparison, `rm -f` and the PC-side key deletion.
+- `docs/developer/09_Deployment_and_Operations.md`: links the runbook; monitoring line updated; rclone note.
+- `docs/DMS_Production_Details.md`: a status summary at the top (live, what's proven, what's still open, where things are).
+No code changed.
+No code changed.

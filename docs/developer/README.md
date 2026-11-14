@@ -21,6 +21,7 @@ production, and points at the exact files. It was written from the code on 2026-
 | 08 | [Testing](08_Testing.md) | write or run the `check:*` suites |
 | 09 | [Deployment & operations](09_Deployment_and_Operations.md) | deploy, back up, restore, monitor, debug production |
 | 10 | [Conventions, extending & known gaps](10_Conventions_and_Extending.md) | add an endpoint/permission/module, or want the list of traps |
+| 11 | [Backup and restore (production runbook)](11_Backup_and_Restore.md) | need to restore data, run the monthly drill, or check the backups |
 
 Also: **[API Reference](../API_Reference.md)** — every endpoint, request, response and error code.
 

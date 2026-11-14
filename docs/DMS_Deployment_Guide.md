@@ -163,7 +163,7 @@ The firewall lives **outside** the server, so nothing running on the server can 
 
 | Type | Protocol | Port | Sources |
 |---|---|---|---|
-| SSH | TCP | 22 | **Your office/home public IP only**: search "what is my IP" and enter it |
+| SSH | TCP | 22 | **Your office/home public IP(s) only**. See the first note below |
 | HTTP | TCP | 80 | All IPv4, All IPv6 |
 | HTTPS | TCP | 443 | All IPv4, All IPv6 |
 | Custom | **UDP** | 443 | All IPv4, All IPv6 (HTTP/3) |
@@ -171,7 +171,9 @@ The firewall lives **outside** the server, so nothing running on the server can 
 - **Outbound rules:** leave the defaults (all allowed). The server needs to reach R2, Brevo, Let's Encrypt and Docker Hub.
 - **Apply to Droplets:** select `dms-prod-1` → **Create Firewall**.
 
-> If your office IP changes later, SSH will stop connecting. Edit the SSH rule to the new IP. If you're ever locked out, use **Droplet → Access → Launch Droplet Console** in DigitalOcean, which works without SSH.
+> **List every public IP your network uses.** Some office networks spread connections over several internet lines, each with its own public IP (the production office has three). In PowerShell run `curl.exe -s https://api.ipify.org` about ten times and add **every** address that appears, or ask whoever runs the network for the full list. With only one listed, SSH works sometimes and times out other times. Add home or mobile networks you work from too.
+
+> If your IP changes later, SSH times out. Add the new IP to the SSH rule; the firewall can always be edited from the DigitalOcean website. To tell a firewall block from a dead server: if port 80 answers (even with "connection refused") while SSH times out, the server is up and the firewall is dropping SSH. The **Droplet Console** may not work once root login is turned off in 3.5, so don't rely on it.
 
 > Don't rely on Ubuntu's `ufw` firewall for this. Docker bypasses it for published ports. The DigitalOcean firewall above is the one that counts.
 
@@ -201,6 +203,8 @@ ssh root@203.0.113.10
 
 ✅ **Expected:** a prompt like `root@dms-prod-1:~#`
 
+> If your key isn't the default `id_ed25519` (for example you made one called `digitalocean`), add `-i ~/.ssh/<name>` to every `ssh` and `scp` command in this guide: `ssh -i ~/.ssh/digitalocean root@203.0.113.10`.
+
 ### 3.2 Update the system
 
 🐧 Server:
@@ -228,6 +232,8 @@ adduser deploy
 ```
 
 Set a strong password and store it in the password manager. You only need it for `sudo`. Press Enter through the name/phone questions, then type `Y`.
+
+> Alternative used on the production server: a key-only `deploy` account with a locked password and passwordless sudo (`adduser --disabled-password deploy`, then `echo "deploy ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-deploy-user`). A member of the `docker` group is root-equivalent anyway, so the sudo password adds little. Either way works; the steps below don't change.
 
 ```bash
 usermod -aG sudo deploy
@@ -371,6 +377,9 @@ The app sends verification, invitation and password-reset emails through Brevo. 
 4. **Add the sender.** **Senders** → **Add sender** → Name `Edoc`, email `noreply@abateas.com`.
 5. **Create an API key.** Profile menu → **SMTP & API** → **API Keys** → **Generate a new API key** → name `dms-production`.
    **Copy it into the password manager now**, because Brevo only shows it once. Make a new key; don't reuse the development one.
+6. **Allow the server's IP.** Brevo blocks API calls from unknown IP addresses once its IP protection is on, and it switches that on by itself after about 30 days with no new IPs. Open **app.brevo.com/security/authorised_ips** and add the droplet's IP. Without this the server can't send any email (6.4 Block 4 tests it). Don't switch the protection off; one allowed IP is safer. If the server ever moves to a new IP, update this list.
+
+> **Which domain sends the email.** The sender doesn't have to be on your company mail domain. Production sends as `noreply@abateas.app` (the site's own domain), which keeps Brevo's DKIM and DMARC records out of the company mail's DNS. Brevo's automatic Cloudflare authentication in step 1 also works: it adds the Brevo-code TXT, two DKIM CNAMEs (grey cloud) and a monitoring-only DMARC record.
 
 ### 5.3 Document storage — Cloudflare R2
 
@@ -395,7 +404,9 @@ The app sends verification, invitation and password-reset emails through Brevo. 
 
 ### 5.4 Off-site copies — Backblaze B2
 
-Two private buckets in Backblaze: one for the encrypted database backups, one for a copy of every document file. Each gets a key that can **add** files but **cannot delete** them. So even someone who fully takes over the server can't destroy the copies.
+Two private buckets in Backblaze: one for the encrypted database backups, one for a copy of every document file. Create **both**: each needs its own lifecycle rule and its own key.
+
+> **Free tier:** Backblaze includes 10 GB free across all buckets, without a card. The replica holds every document plus 90 days of deleted ones, so add payment details before the total nears 10 GB, or uploads and the nightly jobs start failing (Healthchecks will alert). Each gets a key that can **add** files but **cannot delete** them. So even someone who fully takes over the server can't destroy the copies.
 
 **a) Account and region.** 🌐 backblaze.com → sign up for **B2 Cloud Storage**. Choose the region closest to you (for example EU Central or US East). The region can't be changed later.
 
@@ -419,6 +430,8 @@ Backups are kept 90 days off-site, then hidden, then erased 30 days later. A bac
 - **Private**, Default Encryption **Enable**, Object Lock **Disable**
 
 Then **Lifecycle Settings** → **Keep prior versions for this number of days:** `90` → **Update Bucket**.
+
+> ⚠️ On the replica bucket **never use "Days Till Hide"**. It hides *current* files too, so after that many days the live copy of every document would vanish from the replica. "Days Till Hide" belongs only on the backups bucket, where every file is a dated backup.
 
 A file deleted in Edoc (or from R2 by mistake) stays recoverable here for 90 days.
 
@@ -449,7 +462,7 @@ b2 key create --bucket abate-edoc-docs-replica  edoc-replica-prod  listAllBucket
 
 ✅ **Expected:** each `key create` prints two values: a **key ID** and a **key**. Put both pairs in the password manager right away, labelled **backups** and **replica**. The key is shown only once.
 
-Notice what's missing from the permission lists: `deleteFiles`. These keys can upload, list and read, and can *hide* a file, but they can never erase one.
+Notice what's missing from the permission lists: `deleteFiles`. These keys can upload, list and read, and can *hide* a file, but they can never erase one. Check with `b2 key list`: each key should name one bucket and no `deleteFiles`.
 
 ### 5.5 Backup encryption key — age
 
@@ -535,6 +548,8 @@ git checkout v1.0.0
 ```
 
 The checkout prints a note about "detached HEAD". That's normal: you're on the exact tagged release.
+
+Always clone into `~/dms`, whatever the repository is called (production's is `edoc`): the `dc` alias and the compose paths use that folder.
 
 ### 6.3 Create a short command alias
 
@@ -718,7 +733,7 @@ dc exec postgres psql -U dms -d dms -c \
 echo "Invite code: $CODE"
 ```
 
-✅ **Expected:** `INSERT 0 1` and the code printed. Copy the code.
+Run this block **once**. ✅ **Expected:** `INSERT 0 1` and one `Invite code:` line. Copy the code. If you ran it twice there are two codes; 8.6 closes the spare.
 
 ### 8.2 Create the Super Admin account and the organization
 
@@ -771,6 +786,12 @@ dc exec postgres psql -U dms -d dms -c 'SELECT code, "usedCount", "maxUses" FROM
 
 ✅ **Expected:** `usedCount` = `1` = `maxUses`.
 
+Then close any code that was never used, so nobody can create another organization with it:
+
+```bash
+dc exec postgres psql -U dms -d dms -c "UPDATE signup_invite_code SET active = false WHERE \"usedCount\" = 0;"
+```
+
 ---
 
 ## Part 9 — Verify everything (~15 min)
@@ -799,13 +820,20 @@ Parts 5–7 set up the database backups and the daily manifest. This part adds t
 
 🐧 Server:
 
+> ⚠️ **Don't install rclone with `apt`.** Ubuntu 24.04 ships rclone 1.60.1, and Backblaze now accepts only version 4 of its login API, which rclone uses from **1.73.0**. An older rclone fails with `This request is not currently supported on API version number 1`. Install the current release from rclone.org and check its checksum:
+
 ```bash
-sudo apt update && sudo apt install -y rclone jq
+sudo apt update && sudo apt install -y jq
+V=v1.76.0      # any release 1.73.0 or newer; the latest is in https://downloads.rclone.org/version.txt
+cd /tmp
+curl -fsSLO https://downloads.rclone.org/$V/rclone-$V-linux-amd64.deb
+curl -fsSL https://downloads.rclone.org/$V/SHA256SUMS | grep " rclone-$V-linux-amd64.deb" | sha256sum -c -
+sudo apt install -y ./rclone-$V-linux-amd64.deb
 rclone version | head -1
 timedatectl | grep "Time zone"
 ```
 
-✅ **Expected:** `rclone v1.…`, and `Time zone: Etc/UTC`. The schedules below assume UTC.
+✅ **Expected:** `rclone-v1.76.0-linux-amd64.deb: OK` (if it says FAILED, stop), then `rclone v1.76.0`, and `Time zone: Etc/UTC`. The schedules below assume UTC.
 
 ### 10.2 Connect rclone to R2 (read only) and B2 (replica)
 
@@ -873,6 +901,8 @@ sudo chmod 755 /usr/local/bin/dms-replicate.sh
 
 ✅ **Expected:** `[replica] … ok`. In 🌐 Backblaze → **Browse Files** → `abate-edoc-docs-replica`, the same `<org-id>/…` files are now there, and Healthchecks shows `edoc-file-replica` as **up** (green).
 
+If a run fails, the script pings Healthchecks `/fail`, so you (and the second person) get an alert email; the next successful run turns the check green again. The replica can hold fewer files than the database has versions: restoring an old version reuses its stored file.
+
 With a large existing bucket the first run can take hours. Start it inside `tmux` (`tmux new -s replica`, run it, then `Ctrl+B` `D` to detach) so it survives closing SSH.
 
 ### 10.5 Schedule it
@@ -937,6 +967,8 @@ curl -fsS -o /dev/null "<edoc-db-backup URL>/fail"
 
 ✅ **Expected:** the drill database restores and its counts match live. Then **shred the key off the server** (`shred -u ~/dms/backups/age.key`, the last step of §6).
 
+The copy-paste version with production names, the `dms_drill` guard and a file checksum check is `docs/developer/11_Backup_and_Restore.md` §4. Run the clean-up commands **one at a time** (files the containers created are owned by root, so use `rm -f`, or `rm` stops to ask and swallows the next pasted lines), and delete the temporary key copy from your PC in PowerShell.
+
 **f) Droplet backups** are enabled (2.2): 🌐 DigitalOcean → droplet → **Backups** shows "enabled".
 
 ---
@@ -945,13 +977,14 @@ curl -fsS -o /dev/null "<edoc-db-backup URL>/fail"
 
 ### 11.1 External uptime check (recommended, free)
 
-🌐 uptimerobot.com → create a free account → **Add New Monitor**:
-- Type **HTTP(s)**
-- URL `https://dms.abateas.com/api/health`
-- Interval **5 minutes**
-- Alert contact: your email (and a second person)
+🌐 DigitalOcean → **Monitoring** → **Uptime** → **Create Uptime Check**. DigitalOcean's pricing includes one uptime check free each month (1-minute checks from several regions, email alerts); if the screen shows a price, stop and check.
+- Name `edoc-health`, type **HTTPS**, URL `https://dms.abateas.com/api/health`, two or more regions
+- Alert: **Down** for about 2 minutes, to your email and a second person; add **SSL certificate expiry** (about 14 days) if offered
+- Save; within a minute it shows **Up**
 
-This tells you within minutes if the site goes down, even if the whole server is gone.
+This tells you within minutes if the site goes down, even if the whole server is gone. A reboot (Part 9, check 8) is too short to trigger it. To test the alert once, at a quiet moment: `dc stop web`, wait for the "down" email (3–4 minutes), `dc start web`.
+
+> UptimeRobot's free plan is the usual alternative, but sources disagree on whether its terms allow business use. Check its current terms before using it for a company system.
 
 ### 11.2 What's already watching
 
@@ -1016,6 +1049,10 @@ Then update the worksheet's "Release tag deployed".
 | `data-guard` reports `MISSING` or `MISMATCH` | A stored file is gone or damaged. Restore it from the replica: `docs/DMS_Data_Protection_and_Restore.md` §5.3. |
 | Replica log says "max delete" | **Stop.** More than 500 files disappeared from R2 since last night. Find out why before running anything (§4 of the Data Protection doc). |
 | Uploads fail after this update with a checksum or `BadDigest` error | The new upload checksum isn't accepted by the storage provider. Check `dc logs api` and report it; don't disable it silently. |
+| SSH works sometimes, times out other times | Your network uses more than one public IP. Add all of them to the SSH rule (2.3). |
+| Replica fails: `not currently supported on API version number 1` | rclone is older than 1.73. Install the current one from rclone.org (10.1). |
+| Emails fail and Brevo mentions an unrecognised IP | Add the server's IP at app.brevo.com/security/authorised_ips (5.2 step 6). |
+| `rm: remove write-protected regular file …?` in `~/dms/backups` | The file was made by a container (owned by root). Use `rm -f`. |
 | Need to undo a bad release | `deploy/README.md` §6 → Rollback. |
 
 ---
@@ -1027,7 +1064,7 @@ Then update the worksheet's "Release tag deployed".
 - [ ] Logged in as `deploy`; root and password SSH disabled
 - [ ] Docker installed and starting on boot
 - [ ] DNS points at the droplet (grey cloud)
-- [ ] Brevo domain authenticated, sender added, new API key
+- [ ] Brevo domain authenticated, sender added, new API key, server IP in Authorised IPs
 - [ ] R2: `dms-documents`, an app token (read & write) and a replica token (read only)
 - [ ] B2: backups bucket (hide 90 / delete 30) + replica bucket (keep prior versions 90), two **no-delete** keys
 - [ ] age key pair made; private key in the password manager **and** on a USB stick; not on the PC or the server
@@ -1037,6 +1074,6 @@ Then update the worksheet's "Release tag deployed".
 - [ ] Organization created; invite code used up
 - [ ] Storage verified; first department created; people invited
 - [ ] All nine checks in Part 9 pass
-- [ ] Part 10: replica job scheduled; all go-live checks a–f pass, including the first restore drill
+- [ ] Part 10: rclone ≥ 1.73 installed; replica job scheduled; all go-live checks a–f pass, including the first restore drill
 - [ ] Uptime monitor configured
 - [ ] Worksheet filled in and saved

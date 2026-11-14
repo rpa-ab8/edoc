@@ -4,6 +4,7 @@ How Edoc's data is protected, what each safeguard does, and exactly how to get d
 
 - **Setting it up:** `docs/DMS_Deployment_Guide.md` (Parts 5, 6 and 10). This document explains it and holds the restore procedures.
 - **Day-to-day operations:** `deploy/README.md`.
+- **Copy-paste runbook for the live system** (real names, the proven drill): `docs/developer/11_Backup_and_Restore.md`.
 
 > **Read §1 even if you read nothing else.** It explains why the database and the files must both be protected, and why a backup on the same server is not a backup.
 
@@ -124,6 +125,7 @@ At 03:30 UTC, `rclone sync` copies new files from the R2 documents bucket to the
 - **Files deleted in R2 are only *hidden* in B2.** The B2 lifecycle rule removes hidden files after 90 days, and the B2 key has no delete permission. So a mistaken purge, or an emptied R2 bucket, stays recoverable for 90 days.
 - **`--max-delete 500`** makes the job refuse, and alert, if an unusually large number of files disappeared from R2 since the last run. That is the signature of an accident or an attack.
 - It pings its own healthcheck.
+- It needs **rclone 1.73.0 or newer**. Backblaze now accepts only version 4 of its login API, and older rclone (including Ubuntu 24.04's packaged 1.60.1) fails with "not currently supported on API version number 1". The same applies to every rclone command in §5.
 
 > ⚠️ **Retention note (compliance).** Because of the 90-day safety window, a document that was permanently deleted in Edoc (by a person or by the auto-delete retention run) still exists in the B2 replica for up to 90 days. If a regulation requires faster destruction, shorten the B2 lifecycle period. That shortens the recovery window by the same amount. This is a deliberate trade-off to confirm with whoever owns the retention policy.
 
@@ -162,6 +164,8 @@ Encrypted backups (`*.age`) need the private key you created in Deployment Guide
 ```powershell
 scp .\edoc-backup-age.key deploy@<server-ip>:~/dms/backups/age.key
 ```
+
+(Add `-i ~/.ssh/<key>` if your SSH key isn't the default. Then `chmod 600 ~/dms/backups/age.key` on the server.)
 
 🐧 Afterwards (always):
 
@@ -345,11 +349,12 @@ A backup is only proven by restoring it. Once a month:
 1. Bring the age key to the server (§5, "Before any restore").
 2. Restore the newest **off-site** dump into a scratch database:
    ```bash
-   dc run --rm backup sh -c 'aws s3 ls "s3://$BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX/" --endpoint-url "$BACKUP_S3_ENDPOINT"' | grep dump | tail -1
-   dc run --rm backup sh -c 'aws s3 cp "s3://$BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX/<that file>" /backups/drill.dump.age --endpoint-url "$BACKUP_S3_ENDPOINT"'
+   dc run --rm -T backup sh -c 'aws s3 ls "s3://$BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX/" --endpoint-url "$BACKUP_S3_ENDPOINT"' | grep dump | tail -1
+   dc run --rm -T backup sh -c 'aws s3 cp "s3://$BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX/<that file>" /backups/drill.dump.age --endpoint-url "$BACKUP_S3_ENDPOINT"'
    dc exec postgres createdb -U dms dms_drill
-   dc run --rm -e PGDATABASE=dms_drill -e BACKUP_AGE_IDENTITY=/backups/age.key backup restore.sh /backups/drill.dump.age
+   dc run --rm -e PGDATABASE=dms_drill -e BACKUP_AGE_IDENTITY=/backups/age.key backup sh -c '[ "$PGDATABASE" = "dms_drill" ] && restore.sh /backups/drill.dump.age'
    ```
+   > ⚠️ `restore.sh` **replaces** whatever database `PGDATABASE` names. The `[ … = "dms_drill" ] &&` guard makes the command refuse to run unless the target is the scratch database, so a mistyped command can't overwrite live data. (`-T` stops the terminal adding carriage returns to piped output.)
 3. Compare a few counts with live:
    ```bash
    for db in dms dms_drill; do dc exec postgres psql -U dms -d $db -tc "SELECT '$db', (SELECT count(*) FROM document), (SELECT count(*) FROM version), (SELECT count(*) FROM audit_event);"; done
@@ -359,12 +364,14 @@ A backup is only proven by restoring it. Once a month:
    ```bash
    rclone copyto b2-offsite:<replica-bucket>/<a storageRef from the query in §5.3> /tmp/drill-file && file /tmp/drill-file && rm /tmp/drill-file
    ```
-5. Clean up:
+   Better still, compare its `sha256sum` with the `checksum` column of that version: they must be equal.
+5. Clean up, **one command at a time** (`drill.dump.age` was written by a container and is owned by root, so plain `rm` stops to ask and swallows any lines pasted after it):
    ```bash
    dc exec postgres dropdb -U dms dms_drill
-   rm ~/dms/backups/drill.dump.age
+   rm -f ~/dms/backups/drill.dump.age
    shred -u ~/dms/backups/age.key
    ```
+   Then delete the temporary key copy on your PC (PowerShell): `Remove-Item "$HOME\edoc-backup-age.key"`.
 6. Record it in `each_update.md`: the date, the dump used, the counts, and pass or fail.
 
 Once a year, do the full §5.2 rebuild on a temporary droplet, then destroy that droplet.
