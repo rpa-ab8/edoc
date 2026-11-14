@@ -44,3 +44,6 @@ graphify-out/
 
 # Local-only Claude Code notes (holds test credentials)
 CLAUDE.local.md
+
+# Production passwords / API keys / tokens for the live deployment — never commit
+PRODUCTION.local.md

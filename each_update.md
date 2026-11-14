@@ -3159,3 +3159,72 @@ Personal → Abate hung on "Opening workspace…" with the old URL; after it, bo
 the other organization's workspace, and opening the other organization's department URL shows the
 new message. `tsc -b` + ESLint clean. Not tested: switching while on the Super Admin pages, or a
 failed switch (server error) message.
+
+## 2026-11-13 — Date fields get their own calendar (replaces the browser's native date control)
+
+Document fields of type "date" (upload form, and the viewer's Edit form — both go through
+`MetadataFields`) used `<input type="date">`, which the browser draws itself (system font, system blue,
+different in every browser). Replaced with an in-app calendar.
+
+- New `components/DatePicker.tsx`: a single-date field with the same calendar as the filters'
+  `DateRangePicker` — month/year/decade choosers, locale week start, full keyboard movement
+  (arrows, Home/End, PageUp/PageDown, Esc), opens above the field when there's no room below — plus a
+  **Today** shortcut, a **Clear** action and a clear button on the field. Picking a day closes it.
+- The value is unchanged: a `YYYY-MM-DD` string, "" for none, so nothing saved or searched changes.
+- `components/upload/MetadataFields.tsx`: "date" fields render `DatePicker`; number/text unchanged.
+- Refactor so both pickers share code: new `lib/calendarDates.ts` (ymd / parse / shift / withMonth,
+  week start, month and weekday names) and `components/CalendarParts.tsx` (`NavButton`,
+  `GridChoice`), moved out of `DateRangePicker.tsx` unchanged. `DateRangePicker` now imports them.
+
+Checked: `tsc -b` + ESLint clean. In Chrome (HR Contract "Start Date", via the viewer's Edit form):
+field shows "Select a date"; the calendar opens above the field; picking 20 Nov 2026 fills the field as
+"Nov 20, 2026" with a clear button; the month chooser opens; no console errors. Nothing was saved.
+Not checked: the upload panel itself (same component, but a different container), keyboard use, the
+filters' range picker after the refactor (code moved only), narrow screens.
+
+## 2026-11-14 — First production deployment started: server secured, Docker installed, records created
+
+Followed `docs/DMS_Deployment_Guide.md` Parts 3 and 4 on the new DigitalOcean droplet (BLR1,
+`s-2vcpu-4gb`, `168.144.112.26`). No application code changed.
+
+- Server (over SSH): system updated and rebooted; user `deploy` created (uid 1000); SSH hardened
+  (root login and password login off — verified from fresh connections); 2 GB swap; auto-updates
+  confirmed; Docker 29.9.3 + Compose v5.7.1 installed and starting on boot.
+- Deviation from the guide: `deploy` has a locked password and passwordless sudo instead of a sudo
+  password (reason in `docs/DMS_Production_Details.md` §3).
+- New `docs/DMS_Production_Details.md`: the real worksheet values (no secrets), the names that differ
+  from the guide (R2 bucket `edoc-bucket-prod`, B2 bucket `edoc-bucket-prod-backup`), progress per guide
+  part, open decisions and a dated log.
+- New `PRODUCTION.local.md` (repo root) for production passwords/keys, and `.gitignore` now lists it.
+  Confirmed with `git check-ignore` that it can't be committed.
+
+Not done yet: DigitalOcean firewall and alerts, GitHub repo, domain/DNS, Brevo, R2 and B2 keys, age key,
+Healthchecks (all in the user's hands). Open: no domain chosen; the repo has no git remote and the
+deployment changes are uncommitted; B2 needs a second bucket for the document replica.
+
+## 2026-11-14 — Deployment: DigitalOcean firewall done (guide 2.3)
+
+The user created firewall `dms-prod` and applied it to the droplet: SSH 22 from one admin IP only,
+HTTP 80 / HTTPS 443 / UDP 443 from everywhere, outbound at the defaults. They re-tested SSH afterwards and it
+works. Recorded in `docs/DMS_Production_Details.md` (progress table, open decision 4 settled, log); the allowed IP
+is in the gitignored `PRODUCTION.local.md`, not in the committed doc. Still to confirm: alerts (2.4) and
+weekly droplet backups. No code changed.
+
+## 2026-11-14 — Deployment: R2 keys recorded, domain chosen, git side of Part 1 prepared
+
+- **Cloudflare R2 (guide 5.3):** the user created the app token (Object Read & Write) and the replica token
+  (Object Read only) for `edoc-bucket-prod`. Account ID and endpoint are in `docs/DMS_Production_Details.md`;
+  the keys are in the gitignored `PRODUCTION.local.md`. Each secret key was checked to be the SHA-256 of its
+  token value, so the pasted values are consistent. Not yet confirmed: both tokens limited to that one bucket.
+- **Decisions:** domain `edoc.abateas.app` (DNS in Cloudflare); the repo goes on the *company* GitHub account
+  (name pending); a second B2 bucket `edoc-bucket-prod-replica` for the document replica (user to create).
+  New open question: the email sender domain (`abateas.app` vs the guide's `abateas.com`).
+- **Git side of Part 1, local only (no remote yet, nothing pushed):** `tsc` clean for backend and frontend;
+  the files to be committed were scanned for keys and passwords (none). Three commits on
+  `release1-v1.2-and-security`: (1) the data-protection and production-hardening work from earlier sessions
+  that had never been committed — the `OCR_IMAGES_ENABLED` switch, object metadata passed to storage `put()`,
+  the `data-guard` service (daily manifest + scrub), encrypted off-site backups in `deploy/backup/`,
+  `docker-compose.prod.yml`, the `.env*.example` files, the Data Protection and Restore doc and the
+  guide/developer docs; (2) the in-app date picker; (3) the deployment records and this file. `master` was
+  fast-forwarded to it and tagged `v1.0.0`. `backend/_backfill.mts` (a one-off local scratch script with a
+  hard-coded path) was left out on purpose.
