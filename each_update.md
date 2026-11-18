@@ -3497,3 +3497,11 @@ keeping the default folder worked.
   first row in view if the batch is taller than the panel; instant instead of smooth under `prefers-reduced-motion`),
   and new rows fade in. Verified headless at 1366×768: each of three picks (with folder switches) and a two-file batch
   ended fully inside the visible area. `tsc`, `eslint`, `vite build` clean.
+
+## 2026-11-18 — Release v1.0.1 deployed to production
+
+`master` fast-forwarded to `ff3ae88` and tagged `v1.0.1` (the upload-panel fix above plus the docs commits since
+`v1.0.0`; no migration), both pushed to `rpa-ab8/edoc`. Deployed at the user's request per `deploy/README.md` §6:
+pre-deploy backup (verified, copied off-site), `git checkout v1.0.1` on the server, `up -d --build`. `migrate` found
+no pending migrations, all 8 services up, `/api/health` ok, live bundle contains the fix. Recorded in
+`docs/DMS_Production_Details.md` (status table, release row, log).

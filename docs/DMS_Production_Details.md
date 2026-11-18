@@ -10,7 +10,7 @@ Last updated: 2026-11-14
 
 | | |
 |---|---|
-| Site | `https://edoc.abateas.app` (release `v1.0.0`, commit `6cd195e`) |
+| Site | `https://edoc.abateas.app` (release `v1.0.1`, commit `ff3ae88`) |
 | Server | DigitalOcean `s-2vcpu-4gb`, BLR1, `168.144.112.26`, Ubuntu 24.04, image OCR off |
 | Organization | `ABATE`, first department `IT` |
 | Documents | Cloudflare R2 `edoc-bucket-prod` |
@@ -41,7 +41,7 @@ Last updated: 2026-11-14
 | Healthchecks URLs (db-backup / data-guard / file-replica) | three checks created (1 day period, 2 hours grace); the URLs are in `PRODUCTION.local.md` | ✅ 2026-11-14 |
 | Brevo sender | `noreply@abateas.app` (planned; the guide's example was `abateas.com`). Domain `abateas.app` authenticated in Brevo, via the automatic Cloudflare route. The user reports the sender, the production API key and the authorised IP (`168.144.112.26`) are done; the key is in `PRODUCTION.local.md`. This PC's IP isn't allowed in Brevo, so it can't be tested from here; the server test at 6.4 proves the key and the IP | ✅ (reported) |
 | First Super Admin email | a company address on `abateas.com`, recorded in `PRODUCTION.local.md` | ✅ created and verified 2026-11-14 |
-| Release tag deployed | `v1.0.0` (commit `6cd195e`), live since 2026-11-14 about 12:21 UTC, at `https://edoc.abateas.app` | ✅ |
+| Release tag deployed | `v1.0.1` (commit `ff3ae88`), live since 2026-11-18 about 12:24 UTC. Previous: `v1.0.0` (`6cd195e`), 2026-11-14 | ✅ |
 
 ## 2. Names that differ from the guide
 
@@ -150,6 +150,7 @@ Worth doing later: put a passphrase on the SSH key (`ssh-keygen -p -f ~/.ssh/dig
 - R2 token scope, partly checked (2026-11-14): with the **read-only** token, `rclone lsd r2-docs-ro:` (list all buckets) returns `403 AccessDenied`, while `rclone size r2-docs-ro:edoc-bucket-prod` works (2 objects, 4.784 MiB). That is how a token limited to one bucket behaves. The **read-and-write** app token has not been checked the same way; the user should look at its permissions in Cloudflare (R2 → Manage API tokens): "Object Read & Write" on bucket `edoc-bucket-prod` only. (The app's own storage test passing proves it can read and write; it doesn't prove it is limited.)
 - Website confirmations reported by the user (2026-11-14), four of the five: droplet weekly backups enabled (10.6 f); DigitalOcean CPU/memory/disk alerts and the $100 billing alert (2.4); the R2 read-and-write token limited to `edoc-bucket-prod` with Object Read & Write; Object Lock disabled on both Backblaze buckets. These are the user's reports, not visible from the PC. **Not done: guide 11.1, the external uptime monitor.** Decision: use DigitalOcean Uptime (DigitalOcean's pricing page says one uptime check is free every month, with 1-minute checks from 4 regions and email alerts) for `https://edoc.abateas.app/api/health`, instead of UptimeRobot, whose free plan's rules on business use are disputed across sources (not verified on their terms page).
 - Guide Part 9 check 8, **reboot survives, passed** (2026-11-14 about 13:50 UTC): the user ran `apt upgrade` (the 4 pending updates) and `sudo reboot`. Measured from the server's logs: the previous boot's last entry was 13:50:35, the new boot began 13:50:42 (about 7 s of host downtime) and all 8 containers had started by 13:50:50, 15 s after shutdown; from outside `/api/health` answers HTTP 200 in 0.17 s. Everything that has to survive did: Docker enabled and running, cron active with `/etc/cron.d/dms-replicate` intact, `rclone.conf` present (1.76.0), 2 GB swap active, 0 pending updates, no further reboot required, no API errors since boot. The user received **no alert email**, which is expected: the outage (well under a minute) is shorter than the usual "down for 2 minutes" alert rule, so this reboot does **not** test the uptime monitor. It is also unconfirmed whether the DigitalOcean Uptime check (11.1) has been created at all. Optional real test of the monitor: stop the `web` container for 3–4 minutes at a quiet moment (`dc stop web`, wait for the "down" email, `dc start web`).
+- **Release `v1.0.1` deployed (2026-11-18, about 12:24 UTC)**, by Claude over SSH at the user's request, following `deploy/README.md` §6. Contents: the upload-panel fix (a picked file never reached the list after the destination folder was changed; new rows now scroll into view) plus documentation only, no migration. Steps: pre-deploy backup `dms-20261118-122339.dump.age` (364 KB, verified, copied to the B2 backups bucket); `git checkout v1.0.1` on the server (clean tree, `ff3ae88`); `up -d --build`. Checked: `migrate` exited 0 with "No pending migrations to apply"; all 8 services up, `api` healthy; `/api/health` returns ok from outside; the live bundle (`index-C7NclR-v.js`) contains the fix. **Rollback** (no migration): `git checkout v1.0.0 && dc up -d --build`.
 
 ## 7. Things the guide didn't say (all folded into the guide, the Data Protection doc and the developer runbook on 2026-11-14)
 
