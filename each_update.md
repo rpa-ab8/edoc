@@ -3472,3 +3472,28 @@ the organization keeps as PDF copies outside GitHub, and which secrets go only i
 least two people having access, and the age private key also on a USB stick). Linked from `docs/developer/README.md`
 together with `DMS_Production_Details.md`. No code changed.
 No code changed.
+
+## 2026-11-18 — Fix: a picked file sometimes never reached the upload panel
+
+Reported during a demo: in the upload panel, after **changing the destination folder**, browsing and picking a file
+did nothing — the file never appeared in the list (seen in two departments). Closing and reopening the panel and
+keeping the default folder worked.
+
+- Cause (`components/upload/UploadPanel.tsx`, `addFiles`): the panel read the browser's `FileList` *inside* the
+  `setItems` updater, and the picker's `onChange` clears the input (`value = ""`) straight after — which empties that
+  same live `FileList`. React runs a state updater immediately only when the component has no other pending work; on a
+  freshly opened panel it did (so the file arrived), but once any other state had changed (picking a folder) React
+  deferred the updater to render time, by which point the list was empty and zero files were added. Drag-and-drop into
+  the panel had the same weakness.
+- Fix: copy the files into an array before calling `setItems`. Also stopped the hidden input's own click bubbling back
+  to the drop zone, which was asking the browser to open the picker twice per click.
+- Verified with a headless Chrome harness driving the real click → file chooser → change path: default folder; folder
+  changed first; pick → change folder → pick; folder changed then drag-and-drop; three picks with a folder switch
+  between each — all files listed (before the fix, every case after a folder change listed nothing). `tsc` and
+  `eslint` clean. Other pickers (`DocumentViewerPage`, workspace "new version") read the file synchronously — not affected.
+- Follow-up in the same file: newly added rows are now **brought into view**. They land at the bottom of the list,
+  below the shared-details form — usually past the bottom of the panel's scroll area, so even a correctly added file
+  looked like it hadn't arrived. After each pick/drop the panel scrolls just enough to show the new batch (keeping its
+  first row in view if the batch is taller than the panel; instant instead of smooth under `prefers-reduced-motion`),
+  and new rows fade in. Verified headless at 1366×768: each of three picks (with folder switches) and a two-file batch
+  ended fully inside the visible area. `tsc`, `eslint`, `vite build` clean.

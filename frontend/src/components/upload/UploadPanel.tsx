@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { primaryButtonBase, secondaryButtonBase } from "../AuthCard";
 import { Select } from "../Select";
 import { MetadataFields, type FieldValues } from "./MetadataFields";
@@ -95,6 +95,31 @@ export function UploadPanel({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // The batch of rows just added, to bring into view once they're on screen.
+  const [reveal, setReveal] = useState<{ first: string; last: string } | null>(null);
+
+  // New rows land at the bottom of the list, below the shared-details form — often past the bottom
+  // of the panel's scroll area, so a picked file looked like it hadn't arrived. Scroll just enough
+  // to show the new batch, keeping its first row in view if the whole batch doesn't fit.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!reveal || !body) return;
+    const row = (key: string) => body.querySelector<HTMLElement>(`[data-item-key="${key}"]`);
+    const first = row(reveal.first);
+    const last = row(reveal.last);
+    if (!first || !last) return;
+    const view = body.getBoundingClientRect();
+    const top = first.getBoundingClientRect().top - view.top;
+    const bottom = last.getBoundingClientRect().bottom - view.bottom;
+    const margin = 12;
+    let delta = 0;
+    if (bottom > -margin) delta = Math.min(bottom + margin, top - margin);
+    else if (top < margin) delta = top - margin;
+    if (delta === 0) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    body.scrollBy({ top: delta, behavior: reduceMotion ? "auto" : "smooth" });
+  }, [reveal]);
 
   const type = documentTypes.find((t) => t.id === typeId);
   const titleField: DraftField | undefined = type?.fields.find((f) => f.isTitle);
@@ -108,7 +133,15 @@ export function UploadPanel({
   const canSubmit = hasTypes && hasFolders && Boolean(folderId);
 
   function addFiles(list: FileList | File[]) {
-    setItems((prev) => [...prev, ...Array.from(list).map(toItem)]);
+    // Copy the files out *now*. A FileList is live: the picker's onChange clears the input right
+    // after this call (so the same file can be picked twice), which empties the list — and React
+    // may run a state updater later, at render time, rather than immediately. Reading the list
+    // inside the updater then found zero files, which is how a picked file "didn't arrive" after
+    // the destination folder had been changed. Drag-and-drop lists go stale the same way.
+    const added = Array.from(list).map(toItem);
+    if (added.length === 0) return;
+    setItems((prev) => [...prev, ...added]);
+    setReveal({ first: added[0]!.key, last: added[added.length - 1]!.key });
   }
   function patch(key: string, changes: Partial<UploadItem>) {
     setItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...changes } : i)));
@@ -207,7 +240,7 @@ export function UploadPanel({
           </button>
         </header>
 
-        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+        <div ref={bodyRef} className="max-h-[70vh] overflow-y-auto px-6 py-5">
           {!hasTypes ? (
             <EmptyNote
               title="No document types yet"
@@ -289,6 +322,9 @@ export function UploadPanel({
                   multiple
                   accept={ACCEPTED_UPLOAD_ACCEPT}
                   className="hidden"
+                  // The input sits inside the drop zone, whose onClick opens it — without this its
+                  // own click bubbles back up and asks to open the picker a second time.
+                  onClick={(e) => e.stopPropagation()}
                   onChange={(e) => {
                     if (e.target.files?.length) addFiles(e.target.files);
                     e.target.value = "";
@@ -316,7 +352,11 @@ export function UploadPanel({
               {items.length > 0 && (
                 <ul className="mt-5 space-y-2.5">
                   {items.map((item) => (
-                    <li key={item.key} className="rounded-xl border border-line bg-surface px-4 py-3">
+                    <li
+                      key={item.key}
+                      data-item-key={item.key}
+                      className="animate-fade-up rounded-xl border border-line bg-surface px-4 py-3"
+                    >
                       <div className="flex items-center gap-3">
                         <FileTypeIcon mimeType={item.file.type} fileName={item.file.name} className="h-9 w-9" />
                         <div className="min-w-0 flex-1">
