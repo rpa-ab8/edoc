@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { inputBase, primaryButtonBase, secondaryButtonBase, StatusPill } from "./AuthCard";
 import { Select } from "./Select";
+import { SearchSelect } from "./SearchableSelect";
 import { CheckIcon, CopyIcon, TrashIcon, UsersIcon, XIcon } from "./icons";
 import { ApiRequestError } from "../lib/api";
 import { copyText } from "../lib/clipboard";
@@ -174,10 +175,13 @@ function InternalZone({
         Share with a person
       </h3>
 
-      <Select
+      <SearchSelect
+        className="w-full"
         value={targetUserId}
         onChange={setTargetUserId}
-        placeholder={users.length ? "Choose a person…" : "No other people in this organization"}
+        placeholder={users.length ? "Search for a person…" : "No other people in this organization"}
+        searchPlaceholder="Search by name or email…"
+        disabled={users.length === 0}
         ariaLabel="Recipient"
         options={users.map((u) => ({ value: u.id, label: u.fullName, hint: u.email }))}
       />

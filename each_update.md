@@ -3505,3 +3505,34 @@ keeping the default folder worked.
 pre-deploy backup (verified, copied off-site), `git checkout v1.0.1` on the server, `up -d --build`. `migrate` found
 no pending migrations, all 8 services up, `/api/health` ok, live bundle contains the fix. Recorded in
 `docs/DMS_Production_Details.md` (status table, release row, log).
+
+## 2026-11-26 — Searchable people pickers, long-dropdown filters, document type chosen before upload
+
+Four user-requested changes (frontend only; no API, schema or migration change).
+
+- **New `components/SearchableSelect.tsx`**: `SearchSelect` (one value) and `MultiSearchSelect` (tick several).
+  Search box at the top of the menu; every typed word must appear in the label or hint, in any order ("kochi 01"
+  finds "Branch 010 — Kochi", a person is found by name or email). Keyboard: arrows, Enter, Esc. Menu is a portal
+  like `Select`. Multi version stays open while ticking, shows "N selected" in the trigger, removable chips below
+  it, and a Clear / Done footer. `SearchSelect` has an optional `clearable` "Clear selection" action.
+- **Internal sharing** (`ShareDialog.tsx`): the recipient is now a `SearchSelect` over everyone in the
+  organization — search by name or email (SHR internal share).
+- **Department → Members → "Add someone who already has an account"** (`DepartmentDetailPage.tsx`): the long
+  list with a role picker per person is replaced by one form — search for the person, choose a role, "Add to
+  department". Still two steps (choose, then commit), as before.
+- **Filters** (`SearchFilterPanel.tsx`, SRCH-2): a dropdown field with **≤ 20 options** keeps the chips; with
+  **more than 20** it becomes a `MultiSearchSelect` (multi-tick, same `in` filter as before).
+- **Upload/metadata form** (`MetadataFields.tsx`): a dropdown field with more than 20 options becomes a
+  searchable single-pick (`SearchSelect`, clearable). Still one value per field — the data model stores one
+  value for a dropdown, so multi-value at upload would be a schema/search change and was not done.
+- **Upload panel** (`UploadPanel.tsx`): no document type is pre-selected any more (people were filing under the
+  default without looking). The type is marked required; the drop zone is locked ("Choose a document type first")
+  and clicking or dropping on it while locked highlights the type picker in red. Files handed in from a drop on
+  the workspace still list, but Upload stays disabled until a type is chosen. A department with **only one**
+  type still gets it automatically (nothing to choose). The drop zone now says "Filing as <type>".
+- Verified in Chrome against the local stack (dept-admin test account), with one fake extra document type
+  (214-option "Branch", 4-option "Status") injected into the browser's API responses only — no data written:
+  locked drop zone and nudge, type pick unlocks it, 214-option field searchable in upload and as a multi-tick
+  filter (filter applied to the URL/search), 4-option field stays as chips, share recipient search by email.
+  The "add existing member" form was not seen populated (no unassigned people in the local org); it compiles and
+  uses the same component. `tsc -b` and `eslint src` clean.

@@ -19,6 +19,7 @@ import {
   CheckCircleIcon,
   DocumentIcon,
   FolderIcon,
+  LockIcon,
   TrashIcon,
   UploadCloudIcon,
   XIcon,
@@ -89,7 +90,12 @@ export function UploadPanel({
   const [folderId, setFolderId] = useState(initialFolderId ?? folders[0]?.id ?? "");
   const [filedToFolderId, setFiledToFolderId] = useState<string | undefined>(undefined);
   const close = () => onClose(filedToFolderId);
-  const [typeId, setTypeId] = useState(documentTypes[0]?.id ?? "");
+  // No pre-selected type: a default meant people uploaded without looking and filed documents
+  // under the wrong type. The type is chosen first, and the drop zone stays locked until it is.
+  // (With only one type there's nothing to get wrong, so it's taken as given.)
+  const [typeId, setTypeId] = useState(documentTypes.length === 1 ? documentTypes[0]!.id : "");
+  // Set when someone tries to add files before choosing a type, to point them at the type picker.
+  const [typeNudge, setTypeNudge] = useState(false);
   const [shared, setShared] = useState<FieldValues>({});
   const [items, setItems] = useState<UploadItem[]>(() => initialFiles.map(toItem));
   const [busy, setBusy] = useState(false);
@@ -130,7 +136,15 @@ export function UploadPanel({
   const anyResolved = doneCount > 0;
   const hasTypes = documentTypes.length > 0;
   const hasFolders = folders.length > 0;
-  const canSubmit = hasTypes && hasFolders && Boolean(folderId);
+  const canSubmit = hasTypes && hasFolders && Boolean(folderId) && Boolean(type);
+
+  function browse() {
+    if (!type) {
+      setTypeNudge(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }
 
   function addFiles(list: FileList | File[]) {
     // Copy the files out *now*. A FileList is live: the picker's onChange clears the input right
@@ -269,7 +283,10 @@ export function UploadPanel({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[13px] font-medium text-ink">Document type</label>
+                  <label className="mb-1.5 flex items-center gap-1 text-[13px] font-medium text-ink">
+                    Document type
+                    {documentTypes.length > 1 && <span className="text-danger" aria-hidden>*</span>}
+                  </label>
                   {documentTypes.length === 1 ? (
                     <div className="flex items-center gap-2.5 rounded-lg border border-line bg-surface-muted px-3.5 py-2.5">
                       <DocumentIcon size={17} className="text-primary" />
@@ -277,16 +294,28 @@ export function UploadPanel({
                       <span className="plate ml-auto px-2 py-0.5">{type?.idCode}</span>
                     </div>
                   ) : (
-                    <Select
-                      value={typeId}
-                      ariaLabel="Document type"
-                      className="w-full"
-                      options={documentTypes.map((t) => ({ value: t.id, label: t.name, hint: t.idCode }))}
-                      onChange={(v) => {
-                        setTypeId(v);
-                        setShared({}); // fields differ per type
-                      }}
-                    />
+                    <>
+                      <Select
+                        value={typeId}
+                        ariaLabel="Document type"
+                        placeholder="Choose a document type…"
+                        className="w-full"
+                        options={documentTypes.map((t) => ({ value: t.id, label: t.name, hint: t.idCode }))}
+                        onChange={(v) => {
+                          setTypeId(v);
+                          setTypeNudge(false);
+                          setShared({}); // fields differ per type
+                        }}
+                      />
+                      {!type && (
+                        <p
+                          role={typeNudge ? "alert" : undefined}
+                          className={`mt-1.5 text-[12.5px] ${typeNudge ? "font-medium text-danger" : "text-subtle"}`}
+                        >
+                          {typeNudge ? "Choose the document type before adding files." : "Required before adding files."}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -295,27 +324,56 @@ export function UploadPanel({
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => fileInputRef.current?.click()}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && fileInputRef.current?.click()}
+                aria-disabled={!type}
+                onClick={browse}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    browse();
+                  }
+                }}
                 onDragOver={(e) => {
                   e.preventDefault();
-                  setDragging(true);
+                  if (type) setDragging(true);
                 }}
                 onDragLeave={() => setDragging(false)}
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragging(false);
+                  if (!type) {
+                    setTypeNudge(true);
+                    return;
+                  }
                   if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
                 }}
-                className={`flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-4 py-7 text-center transition-colors ${
-                  dragging ? "border-primary bg-primary-tint" : "border-line hover:border-primary/50 hover:bg-surface-muted/60"
+                className={`flex flex-col items-center rounded-xl border-2 border-dashed px-4 py-7 text-center transition-colors ${
+                  !type
+                    ? `cursor-not-allowed bg-surface-muted/50 ${typeNudge ? "border-danger/40" : "border-line"}`
+                    : dragging
+                      ? "cursor-pointer border-primary bg-primary-tint"
+                      : "cursor-pointer border-line hover:border-primary/50 hover:bg-surface-muted/60"
                 }`}
               >
-                <UploadCloudIcon size={26} className="text-primary" />
-                <p className="mt-2.5 text-[14.5px] font-medium text-ink">
-                  Drop files here, or <span className="text-primary">browse</span>
-                </p>
-                <p className="mt-1 text-[12.5px] text-subtle">PDF, JPG, PNG, DOCX, XLSX · up to 120MB each</p>
+                {type ? (
+                  <>
+                    <UploadCloudIcon size={26} className="text-primary" />
+                    <p className="mt-2.5 text-[14.5px] font-medium text-ink">
+                      Drop files here, or <span className="text-primary">browse</span>
+                    </p>
+                    <p className="mt-1 text-[12.5px] text-subtle">
+                      Filing as <span className="font-medium text-ink">{type.name}</span> · PDF, JPG, PNG, DOCX,
+                      XLSX · up to 120MB each
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <LockIcon size={22} className="text-subtle" />
+                    <p className="mt-2.5 text-[14.5px] font-medium text-muted">Choose a document type first</p>
+                    <p className="mt-1 text-[12.5px] text-subtle">
+                      Files are filed under the type you pick, so pick it before adding them.
+                    </p>
+                  </>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -411,6 +469,9 @@ export function UploadPanel({
 
         <footer className="flex items-center justify-between gap-3 border-t border-line px-6 py-4">
           <p className="text-[13px] text-subtle">
+            {!type && readyCount > 0 && (
+              <span className="font-medium text-danger">Choose a document type to upload</span>
+            )}
             {doneCount > 0 && `${doneCount} filed`}
             {doneCount > 0 && readyCount > 0 && " · "}
             {readyCount > 0 && `${readyCount} ready`}

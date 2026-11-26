@@ -1,9 +1,13 @@
 import { inputBase } from "../AuthCard";
 import { DatePicker } from "../DatePicker";
 import { Select } from "../Select";
+import { SearchSelect } from "../SearchableSelect";
 import type { DraftField } from "../../lib/departments";
 
 export type FieldValues = Record<string, string>;
+
+/** Dropdown fields with more options than this get a searchable picker. */
+const SEARCH_THRESHOLD = 20;
 
 /**
  * The upload/metadata form, generated from a document type's field definitions (Feature Spec §6.2:
@@ -52,7 +56,20 @@ export function MetadataFields({
               )}
             </label>
 
-            {field.fieldType === "dropdown" ? (
+            {field.fieldType === "dropdown" && (field.options?.length ?? 0) > SEARCH_THRESHOLD ? (
+              // Long lists (some departments have 200+ options) get a search box instead of a
+              // scroll-only menu.
+              <SearchSelect
+                value={value}
+                ariaLabel={field.label}
+                placeholder="Select…"
+                searchPlaceholder={`Search ${field.options!.length} options…`}
+                className="w-full"
+                clearable
+                options={field.options!.map((o) => ({ value: o, label: o }))}
+                onChange={(v) => onChange(id, v)}
+              />
+            ) : field.fieldType === "dropdown" ? (
               <Select
                 value={value}
                 ariaLabel={field.label}

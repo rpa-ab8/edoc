@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "../components/AppShell";
 import { StatusPill, inputBase, inputClass, primaryButtonBase } from "../components/AuthCard";
 import { Select } from "../components/Select";
+import { SearchSelect } from "../components/SearchableSelect";
 import {
   DocumentTypeEditor,
   cleanDocumentTypes,
@@ -114,7 +115,9 @@ export function DepartmentDetailPage() {
   const [rules, setRules] = useState<DepartmentRules>(DEFAULT_DEPARTMENT_RULES);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRoleId, setInviteRoleId] = useState("");
-  const [pendingMemberRole, setPendingMemberRole] = useState<Record<string, string>>({});
+  // "Add someone who already has an account": pick a person (searchable), pick a role, then Add.
+  const [addUserId, setAddUserId] = useState("");
+  const [addRoleId, setAddRoleId] = useState("");
 
   useEffect(() => {
     if (!department) return;
@@ -583,56 +586,62 @@ export function DepartmentDetailPage() {
                 <UsersIcon size={17} className="text-subtle" /> Add someone who already has an account
               </h3>
               {unassigned.length > 0 ? (
-                <div className="mt-4 space-y-2">
-                  {unassigned.map((m) => (
-                    <div
-                      key={m.userId}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-muted bg-surface-muted px-4 py-3"
-                    >
-                      <span>
-                        <span className="block text-[13.5px] font-medium text-ink">{m.fullName}</span>
-                        <span className="block text-[13px] text-subtle">{m.email}</span>
-                      </span>
-                      {/* Two steps on purpose: picking a role used to add the person immediately,
-                          so a stray change event granted someone access to a department with no
-                          confirming action. Choosing a role is now just choosing; "Add" commits. */}
-                      <span className="flex items-center gap-2.5">
-                        <Select
-                          ariaLabel={`Role for ${m.fullName}`}
-                          className="w-52"
-                          placeholder="Choose a role…"
-                          value={pendingMemberRole[m.userId] ?? ""}
-                          options={grantableRoles.map(roleOption)}
-                          onChange={(roleId) =>
-                            setPendingMemberRole((prev) => ({ ...prev, [m.userId]: roleId }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          disabled={!pendingMemberRole[m.userId] || saving}
-                          onClick={() => {
-                            const roleId = pendingMemberRole[m.userId];
-                            if (!roleId) return;
-                            void run(async () => {
-                              await apiRequest(`/departments/${departmentId}/members`, {
-                                method: "POST",
-                                body: JSON.stringify({ userId: m.userId, roleId }),
-                              });
-                              setPendingMemberRole((prev) => {
-                                const next = { ...prev };
-                                delete next[m.userId];
-                                return next;
-                              });
-                            }, `${m.fullName} added to this department.`);
-                          }}
-                          className={`${primaryButtonBase} px-5 disabled:opacity-40`}
-                        >
-                          Add
-                        </button>
-                      </span>
+                <>
+                  <p className="mt-1 text-[14px] text-muted">
+                    {unassigned.length} {unassigned.length === 1 ? "person" : "people"} in the organization
+                    {unassigned.length === 1 ? " isn't" : " aren't"} in this department yet. Search by name or email.
+                  </p>
+                  {/* Two steps on purpose: picking a role used to add the person immediately, so a
+                      stray change event granted access with no confirming action. Choosing is just
+                      choosing; "Add" commits. */}
+                  <form
+                    className="mt-4 flex flex-wrap items-end gap-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const person = unassigned.find((m) => m.userId === addUserId);
+                      if (!person || !addRoleId) return;
+                      void run(async () => {
+                        await apiRequest(`/departments/${departmentId}/members`, {
+                          method: "POST",
+                          body: JSON.stringify({ userId: person.userId, roleId: addRoleId }),
+                        });
+                        setAddUserId("");
+                        setAddRoleId("");
+                      }, `${person.fullName} added to this department.`);
+                    }}
+                  >
+                    <div className="min-w-[260px] flex-1">
+                      <label className="mb-2 block text-[13.5px] font-medium text-ink">Person</label>
+                      <SearchSelect
+                        ariaLabel="Person to add"
+                        className="w-full"
+                        placeholder="Search for a person…"
+                        searchPlaceholder="Search by name or email…"
+                        value={addUserId}
+                        options={unassigned.map((m) => ({ value: m.userId, label: m.fullName, hint: m.email }))}
+                        onChange={setAddUserId}
+                      />
                     </div>
-                  ))}
-                </div>
+                    <div>
+                      <label className="mb-2 block text-[13.5px] font-medium text-ink">Role</label>
+                      <Select
+                        ariaLabel="Role for the person being added"
+                        className="w-52"
+                        placeholder="Choose a role…"
+                        value={addRoleId}
+                        options={grantableRoles.map(roleOption)}
+                        onChange={setAddRoleId}
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!addUserId || !addRoleId || saving}
+                      className={`${primaryButtonBase} px-6 disabled:opacity-40`}
+                    >
+                      Add to department
+                    </button>
+                  </form>
+                </>
               ) : (
                 <p className="mt-3 text-[13.5px] text-subtle">
                   Everyone in the organization's directory already has a role here. New people are

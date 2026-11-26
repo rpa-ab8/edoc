@@ -1,6 +1,7 @@
 import { inputBase } from "../AuthCard";
 import { DateRangePicker } from "../DateRangePicker";
 import { Select } from "../Select";
+import { MultiSearchSelect } from "../SearchableSelect";
 import { XIcon } from "../icons";
 import type { DraftDocumentType, DraftField } from "../../lib/departments";
 import type { SearchFilter } from "../../lib/search";
@@ -137,6 +138,9 @@ export function SearchFilterPanel({
   );
 }
 
+/** Dropdown fields with more options than this switch from chips to a searchable list. */
+const CHIP_LIMIT = 20;
+
 function FieldFilter({
   field,
   current,
@@ -156,6 +160,25 @@ function FieldFilter({
       const next = selected.includes(opt) ? selected.filter((o) => o !== opt) : [...selected, opt];
       onChange(next.length ? { fieldDefId: id, op: "in", values: next } : null);
     };
+    const options = field.options ?? [];
+    // Up to 20 options read best as tappable chips; past that (some departments have 200+), a wall
+    // of chips is unusable, so the field becomes a searchable tick-list instead.
+    if (options.length > CHIP_LIMIT) {
+      return (
+        <div>
+          {label}
+          <MultiSearchSelect
+            values={selected}
+            ariaLabel={field.label}
+            className="w-full"
+            placeholder="Any"
+            searchPlaceholder={`Search ${options.length} options…`}
+            options={options.map((o) => ({ value: o, label: o }))}
+            onChange={(next) => onChange(next.length ? { fieldDefId: id, op: "in", values: next } : null)}
+          />
+        </div>
+      );
+    }
     return (
       <div>
         {label}
