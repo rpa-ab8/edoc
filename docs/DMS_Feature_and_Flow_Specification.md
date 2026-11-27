@@ -270,7 +270,7 @@ Two complementary mechanisms, both generated automatically from the schema:
 | Field type | Filter control |
 |---|---|
 | Text / ID | Match or exact lookup |
-| Dropdown | Multi-select chips |
+| Dropdown | Multi-select chips for up to 20 options; above 20, a searchable tick-list (search box, tick several, chosen values shown as removable chips) *(amended 2026-11-26, v1.0.2)* |
 | Date | Date-range picker |
 | Number | Range slider |
 | Person | User picker |
@@ -286,17 +286,20 @@ The two combine — search "leave policy", then filter to type Policy, current v
 The design principle: **separate what the system captures from what the person types.** The schema can be rich while typing stays near zero. Rich for retrieval, light for the human.
 
 ### 6.1 Entry points
-Upload button, drag-and-drop onto the view, or bulk drop of many files. All land in the current folder, which means the document type is already inferred.
+Upload button, drag-and-drop onto the view, or bulk drop of many files. All land in the current folder by default (the destination can be changed in the upload panel).
+
+**Document type is chosen first** *(amended 2026-11-26, v1.0.2, at the product owner's request)*. The upload panel no longer pre-selects a type: with a default in place, people uploaded without looking and filed documents under the wrong type. When a department has more than one document type, the type field starts empty and is required, and the drop zone stays locked ("Choose a document type first") until a type is picked. A department with exactly one type gets it automatically, because there is nothing to choose.
 
 ### 6.2 The upload form is generated per document type
 There is no single fixed upload form. The fields shown are exactly the fields defined for that document type in step 3 — a Contract in HR asks for Employee ID, name, start and end date; an Invoice in Accounts asks for vendor, bill number, amount and bill date. Same action, different fields, driven entirely by configuration.
 
 ### 6.3 Keeping it fast
 - **Most fields optional.** *Filterable* and *required* are separate switches — a field can be fully searchable yet optional. Templates mark only the title field required.
-- **Auto-fill the free values.** Department, uploader, date, file type and document type (inferred from the folder) are never asked.
+- **Auto-fill the free values.** Department, uploader, date and file type are never asked. Document type is asked once per batch, before files are added (§6.1); it is filled automatically only when the department has a single type.
 - **Read the document.** OCR and extraction pre-fill fields where possible so the user confirms rather than types.
 - **Never block.** A file can save with the minimum and anything missing goes to a "needs details" queue to finish later.
-- **Remember and default.** Dropdowns default to the most common value; the form remembers the last selection.
+- **Remember and default.** Dropdowns default to the most common value; the form remembers the last selection. *(Not built in Release 1: dropdowns start empty. The document type deliberately has no default; see §6.1.)*
+- **Long dropdowns are searchable.** A dropdown field with more than 20 options shows a search box instead of a scroll-only list (one value per field, as stored). *(Added 2026-11-26, v1.0.2.)*
 
 ### 6.4 Bulk upload
 A **shared-fields bar** applies whatever is common to every file (all Contracts, all HR, all 2026) once, to all of them. Each file then fills its own specifics on top. Files land as "Ready" with no attention needed; the user's eyes go only to exceptions. Attention scales with problems, not with file count.
@@ -308,6 +311,15 @@ Three mechanics matter beyond the happy path:
 - **Background OCR.** Runs as files land, so scans become full-text searchable shortly after upload without anyone waiting.
 
 Formats: PDF, images and Office files (DOCX, XLSX), plus Markdown (.md) and plain text (.txt) — added 2026-11-07. Markdown is shown formatted in the viewer (raw HTML never rendered, images not auto-loaded); plain text is shown as-is. Both are full-text searchable at once, without OCR. Unsupported types are flagged rather than failing silently.
+
+*Amended 2026-11-27 (product owner) — IT files.* Any other file can be uploaded as well, so IT departments can
+keep `.env`, `.key`, `.pem`, `.json`, `.yml`, `.log`, `.tmp`, `.zip`, certificates and the like:
+- **Text files:** previewed as plain text and searchable.
+- **Binary files:** download only. The viewer says "No inline preview for this file type".
+- **Secret files** (`.env`, `.key`, `.pem`, `id_rsa`…): stored and previewable, but their contents are **not**
+  searchable, so a password inside one never turns up in search results. They can still be found by name and details.
+- **Still blocked:** programs and scripts that run on a double-click (`.exe`, `.msi`, `.bat`, `.cmd`, `.js`,
+  `.vbs`…), shortcuts, and web pages / SVG. A file whose contents are a program is refused whatever it is named.
 
 *Deferred:* auto-extraction behaviour (confidence tiers, confirm step, provenance) was designed but parked for later review. Scan-from-mobile and email-to-upload are natural future additions.
 

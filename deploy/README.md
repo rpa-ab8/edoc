@@ -1,6 +1,6 @@
 # Edoc — Production Runbook
 
-> **Deploying for the first time?** Follow the step-by-step guide in `docs/DMS_Deployment_Guide.md`. This runbook is the day-to-day operations reference.
+> **Deploying for the first time?** Follow the step-by-step guide in `docs/DMS_Deployment_Guide.md`. **Releasing a new version?** Follow `docs/DMS_Release_and_Deployment_Procedure.md` (checks, tagging, backup, deploy, verification, rollback, record). This runbook is the day-to-day operations reference.
 
 One server, everything in Docker Compose (Tech Stack §3.9). Sizing and cost: the *Edoc Production Budget* doc (2 vCPU / 4 GB, image OCR off). `docs/DMS_Budget_Plan_s-4vcpu-8gb.md` is the earlier plan **with** OCR.
 
@@ -106,6 +106,8 @@ Change every development or test password, and never reuse one from development.
 The NAS needs its own snapshots plus an off-site copy, because the database dumps don't include document files and the R2 replica job doesn't apply. See `docs/DMS_Data_Protection_and_Restore.md` §8.
 
 ## 6. Updating
+
+Short form below. The full step-by-step, with the checks before and after and the rollback decision, is `docs/DMS_Release_and_Deployment_Procedure.md`.
 
 ```sh
 dc run --rm backup backup.sh        # restore point first, always

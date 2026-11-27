@@ -3506,6 +3506,12 @@ pre-deploy backup (verified, copied off-site), `git checkout v1.0.1` on the serv
 no pending migrations, all 8 services up, `/api/health` ok, live bundle contains the fix. Recorded in
 `docs/DMS_Production_Details.md` (status table, release row, log).
 
+## 2026-11-24 — Invite code for a second production organization
+
+At the user's request, inserted one single-use organization invite code into the live database over SSH
+(`signup_invite_code`: `maxUses` 1, no expiry, active). No code or schema change. Logged (without the code itself) in
+`docs/DMS_Production_Details.md` §6.
+
 ## 2026-11-26 — Searchable people pickers, long-dropdown filters, document type chosen before upload
 
 Four user-requested changes (frontend only; no API, schema or migration change).
@@ -3536,3 +3542,73 @@ Four user-requested changes (frontend only; no API, schema or migration change).
   filter (filter applied to the URL/search), 4-option field stays as chips, share recipient search by email.
   The "add existing member" form was not seen populated (no unassigned people in the local org); it compiles and
   uses the same component. `tsc -b` and `eslint src` clean.
+
+## 2026-11-26 — Release v1.0.2 deployed to production
+
+`master` fast-forwarded to `d182dc8` and tagged `v1.0.2` (the searchable pickers / long-dropdown filters /
+type-before-upload change above; no migration), both pushed to `rpa-ab8/edoc`. Deployed at the user's request per
+`deploy/README.md` §6: pre-deploy backup (verified, copied off-site), `git checkout v1.0.2` on the server,
+`up -d --build`. `migrate` found no pending migrations, all 8 services up, `/api/health` ok, live bundle contains
+the new screens. Recorded in `docs/DMS_Production_Details.md` (status table, release row, log).
+
+## 2026-11-26 — Docs: release and deployment procedure; specs brought up to date with v1.0.2
+
+- New `docs/DMS_Release_and_Deployment_Procedure.md`: the full procedure for releasing a new version to
+  production. It covers quick facts, the rules, versioning/branch/tag policy, deciding the release type
+  (frontend / backend / migration / new setting / compose), PC preparation and checks, publishing (fast-forward
+  `master`, including the `git fetch . <branch>:master` route when the PC has uncommitted files, annotated tag,
+  CI), server deploy (look-first checks, pre-deploy backup, checkout, build), verification (migrate, services,
+  logs, health, live bundle, smoke test, headers), recording, rollback with and without a migration, special
+  cases (hotfix, migration, new setting, compose change, OS updates, another PC), troubleshooting, a one-page
+  checklist, a record template, non-interactive SSH commands and the release history (v1.0.0–v1.0.2).
+- Linked from `deploy/README.md` (top and §6), `docs/DMS_Deployment_Guide.md` Part 12,
+  `docs/developer/09_Deployment_and_Operations.md`, `docs/developer/README.md`, `docs/DMS_Documentation_Handover.md`
+  (developer list and the PDF copies for the organization) and `docs/DMS_Production_Details.md`.
+- `docs/DMS_Feature_and_Flow_Specification.md`: dropdown filter control (chips up to 20 options, searchable
+  tick-list above); §6.1/§6.3 amended: the document type is chosen before files are added, with no default unless
+  the department has a single type; "dropdowns default to the most common value" marked as not built in R1; long
+  dropdowns searchable on the upload form.
+- `docs/developer/07_Frontend.md`: `UploadPanel`, `SearchFilterPanel`, `ShareDialog` rows updated; new row for
+  `SearchSelect` / `MultiSearchSelect`.
+- `docs/DMS_Production_Details.md`: "Last updated" 2026-11-26.
+No code changed.
+
+## 2026-11-27 — Upload accepts IT files (.env, .key, .json, .tmp, …); programs stay blocked
+
+User request: support `.key`, `.env`, temp files and most IT file types. Decided with the user: binary files are
+**download-only**; secret files are **not indexed** for search. No schema or migration change.
+
+- **Backend `lib/upload-formats.ts`:**
+  - **Core formats** (PDF, JPG/PNG, DOCX, XLSX, MD, TXT) are verified exactly as before (M-5).
+  - **Any other extension:** clean UTF-8 text (and not a recognised binary format) is stored as `text/plain`,
+    previewable and searchable. Anything else is stored as `application/octet-stream`, download only. An unknown
+    extension never borrows a core format from the declared MIME.
+  - **Still blocked** (`BLOCKED_EXTENSIONS`), checked on the last extension so `x.pdf.exe` is caught:
+    - programs and installers (`.exe`, `.dll`, `.msi`, `.jar`…);
+    - double-click scripts (`.bat`, `.cmd`, `.vbs`, `.js`, `.reg`, `.hta`…);
+    - shortcuts (`.lnk`, `.url`);
+    - HTML/SVG.
+  - Any file whose bytes are an executable (PE/ELF/Mach-O/Java class) is refused whatever its name. This
+    changes the "exe named .pdf" refusal code to `unsupported_format`.
+  - **Secret files** (`isSecretFile`: `.env*`, `.key`, `.pem`, `.ppk`, `.pfx`, `.p12`, `.jks`, `.kdbx`, `.ovpn`,
+    `id_rsa`…): stored and previewable, but `ocrText` stays null, so their contents are never searchable. The
+    OCR worker also refuses to index them.
+- **`/documents/:id/file` and `/links/:token/file`:** a preview of anything other than PDF/PNG/JPEG/text returns
+  `415 preview_unavailable`, so download-only files are never served inline.
+- **Frontend:**
+  - The upload panel checks a blocklist (`uploadAllowed`) instead of an allowlist, and the pickers no longer
+    restrict the file type.
+  - Drop-zone hint: "any document or IT file".
+  - `FileTypeIcon`: a lock for secret files, a download glyph for download-only files.
+  - The viewer already shows "No inline preview…" with Download for binary files.
+- **Tests:** `check:upload-content` 100/100, including the new IT-file section (text, secret, binary and blocked
+  cases). `check:upload` 18/18 (the unsupported case is now an `.exe`). Also passing: `check:search`,
+  `check:sharing`, `check:documents`, `check:share-exposure` and `check:link-revalidation`. Lint and both tsc
+  builds are clean.
+- **Docs:**
+  - API Reference upload section.
+  - Feature Spec §6.4 (amended 2026-11-27).
+  - SECURITY_AUDIT M-5 amendment. Residual risk: there is still no malware scanner, which matters more now
+    that `.zip` files are accepted.
+- Not deployed. It needs a release (`v1.0.3`, patch: no migration). Not yet checked by hand in the browser,
+  because the local backend was stopped for low memory.

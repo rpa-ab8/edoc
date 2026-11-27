@@ -102,12 +102,12 @@ Errors: show `err.message` (written for users); branch on `err.code`. `err.detai
 | `AppShell` | Page chrome for admin pages (dark green rail + content). |
 | `WorkspaceShell` | The department workspace frame: folder tree, quick views (Recent, Uploaded by me, Shared with me/by me, Trash), search bar. |
 | `DepartmentWorkspacePage` (largest file) | Folder browser, document table, search results panel, folder actions (new, rename, move, delete, permissions, confidential, legal hold), upload entry. |
-| `UploadPanel` + `MetadataFields` | Batch upload: destination folder, one type per batch, shared fields, per-file title; sequential uploads; duplicate resolution prompt. Forms generated from `field_def`. |
+| `UploadPanel` + `MetadataFields` | Batch upload: destination folder, one type per batch (no default when the department has more than one type; the drop zone is locked until a type is chosen), shared fields, per-file title; sequential uploads; duplicate resolution prompt. Forms generated from `field_def`; a dropdown with more than 20 options renders as `SearchSelect`. |
 | `NeedsDetailsPanel` | Complete metadata of incomplete uploads. |
-| `SearchFilterPanel` | Filters generated from the chosen type's filterable fields (text→contains, dropdown→multi-select, date→range, number→range) + Upload Date range. |
+| `SearchFilterPanel` | Filters generated from the chosen type's filterable fields (text→contains, dropdown→chips up to 20 options / `MultiSearchSelect` above 20, date→range, number→range) + Upload Date range. |
 | `DocumentViewerPage` | Preview (`iframe`/`img` from a blob URL; Markdown and plain text fetched as text), details, version history, activity, Legal Hold section; actions gated by `document.permissions`. |
 | `MarkdownView` | Safe Markdown renderer (`react-markdown` 10 + `remark-gfm` 4): raw HTML dropped (`skipHtml`), `javascript:`-style URLs neutralised, **images never auto-loaded** (shown as links), external links `noopener noreferrer`. Used by the viewer and the external-link page through `LazyMarkdownView`, which loads it as a separate chunk (~60 kB gzipped) only when a Markdown file is opened. Never add `rehype-raw`. |
-| `ShareDialog`, `SharesList` | Create/manage shares; internal and external zones visually separate. |
+| `ShareDialog`, `SharesList` | Create/manage shares; internal and external zones visually separate. The internal recipient is a `SearchSelect` (search by name or email). |
 | `TrashList` | Trash with restore, purge, empty (DA), countdown, hold badges. |
 | `FolderPermissionsDialog` | Restrict a role on a folder (only shows what the role has). |
 | `MoveFolderDialog` | Destination picker; invalid destinations disabled with the reason. |
@@ -119,6 +119,7 @@ Errors: show `err.message` (written for users); branch on `err.code`. `err.detai
 | `department/RetentionPanel` | Auto-delete period (with confirm), upcoming deletions, holds. |
 | `StorageConnectionForm` | Report-first view when connected; replace behind a warning. |
 | `Select`, `DateRangePicker` | Custom listbox and date-range picker (consistent styling across browsers). |
+| `SearchSelect`, `MultiSearchSelect` (`SearchableSelect.tsx`) | Long-list pickers: a search box in the menu; every typed word must appear in the label or hint. Single pick (optional "Clear selection") and multi-tick (chips under the trigger, Clear/Done footer). Used for people pickers (share recipient, department "add existing member") and dropdown fields with more than 20 options. |
 | `AccountFooter` | Name, email, org switcher (only if >1 org), sign out. |
 
 ## 6. Conventions

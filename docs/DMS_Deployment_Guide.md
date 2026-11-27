@@ -1003,11 +1003,11 @@ This tells you within minutes if the site goes down, even if the whole server is
 | **Weekly** | Glance at service status, the latest backups and the replica log | 🐧 `dc ps` · `sudo ls -lh ~/dms/backups \| tail -4` · `tail -3 ~/dms-replicate.log` · 🌐 Healthchecks: all three green |
 | **Monthly** | OS updates + reboot (out of hours) | 🐧 `sudo apt update && sudo apt upgrade -y && sudo reboot` |
 | **Monthly** | **Restore drill** (30 min) | `docs/DMS_Data_Protection_and_Restore.md` §6 |
-| **Every release** | Backup first, then update | `deploy/README.md` §6 |
+| **Every release** | Backup first, then update | `docs/DMS_Release_and_Deployment_Procedure.md` |
 | **Yearly** | **Full rebuild rehearsal** on a temporary droplet | `docs/DMS_Data_Protection_and_Restore.md` §5.2 |
 | **Yearly** | Review who is Super Admin / Department Admin; rotate API keys; check the USB key copy still reads | Directory + `deploy/README.md` §8 |
 
-### Deploying a new version (summary; full detail in `deploy/README.md` §6)
+### Deploying a new version (summary; full procedure in `docs/DMS_Release_and_Deployment_Procedure.md`)
 
 🖥️ On your PC, tag and push the release:
 

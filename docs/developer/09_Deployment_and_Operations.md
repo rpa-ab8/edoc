@@ -3,6 +3,7 @@
 Two operator documents already exist and stay authoritative:
 - **`docs/DMS_Deployment_Guide.md`** — the click-by-click first deployment (server, DNS, secrets, first org).
 - **`deploy/README.md`** — the day-to-day runbook (updates, rollback, backups/restore, secrets rotation).
+- **`docs/DMS_Release_and_Deployment_Procedure.md`** — the full procedure for releasing a new version: versioning, tagging, pre-deploy backup, deploy, verification, rollback and record-keeping.
 
 This chapter is the developer's map of the production system and what code changes mean for it.
 

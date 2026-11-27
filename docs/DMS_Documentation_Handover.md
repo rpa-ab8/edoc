@@ -22,6 +22,7 @@ Give a new developer access to the repository and point them at these, in this o
 | `docs/developer/11_Backup_and_Restore.md` | The restore runbook for the live system, with real names |
 | `docs/DMS_Production_Details.md` | What is live right now, and the full deployment history |
 | `docs/DMS_Deployment_Guide.md` | How to build a production server from scratch |
+| `docs/DMS_Release_and_Deployment_Procedure.md` | How to release a new version to production, check it, roll it back and record it |
 | `docs/DMS_Data_Protection_and_Restore.md` | Why the backups are designed this way, and every restore procedure |
 | `deploy/README.md` | Day-to-day operations: updates, rollback, rotating keys |
 | `each_update.md` | The chronological log of every change |
@@ -38,6 +39,7 @@ copies after major changes:
 - `docs/DMS_Production_Details.md`
 - `docs/developer/11_Backup_and_Restore.md`
 - `docs/DMS_Data_Protection_and_Restore.md`
+- `docs/DMS_Release_and_Deployment_Procedure.md`
 - the budget document, *Edoc Production Budget*
 
 They contain no passwords, so they are safe to share inside the company.
