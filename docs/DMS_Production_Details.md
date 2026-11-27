@@ -4,13 +4,13 @@ The live record of the **first production deployment**. It follows `docs/DMS_Dep
 
 > **No secrets in this file.** It is committed to git. Passwords, API keys and tokens go in `PRODUCTION.local.md` (repo root, gitignored) and the password manager.
 
-Last updated: 2026-11-26
+Last updated: 2026-11-27
 
 ## Status: live since 2026-11-14
 
 | | |
 |---|---|
-| Site | `https://edoc.abateas.app` (release `v1.0.2`, commit `d182dc8`) |
+| Site | `https://edoc.abateas.app` (release `v1.0.3`, commit `333517a`) |
 | Server | DigitalOcean `s-2vcpu-4gb`, BLR1, `168.144.112.26`, Ubuntu 24.04, image OCR off |
 | Organization | `ABATE`, first department `IT` |
 | Documents | Cloudflare R2 `edoc-bucket-prod` |
@@ -41,7 +41,7 @@ Last updated: 2026-11-26
 | Healthchecks URLs (db-backup / data-guard / file-replica) | three checks created (1 day period, 2 hours grace); the URLs are in `PRODUCTION.local.md` | ✅ 2026-11-14 |
 | Brevo sender | `noreply@abateas.app` (planned; the guide's example was `abateas.com`). Domain `abateas.app` authenticated in Brevo, via the automatic Cloudflare route. The user reports the sender, the production API key and the authorised IP (`168.144.112.26`) are done; the key is in `PRODUCTION.local.md`. This PC's IP isn't allowed in Brevo, so it can't be tested from here; the server test at 6.4 proves the key and the IP | ✅ (reported) |
 | First Super Admin email | a company address on `abateas.com`, recorded in `PRODUCTION.local.md` | ✅ created and verified 2026-11-14 |
-| Release tag deployed | `v1.0.2` (commit `d182dc8`), live since 2026-11-26 about 10:37 UTC. Previous: `v1.0.1` (`ff3ae88`), 2026-11-18; `v1.0.0` (`6cd195e`), 2026-11-14 | ✅ |
+| Release tag deployed | `v1.0.3` (commit `333517a`), live since 2026-11-27 about 05:54 UTC. Previous: `v1.0.2` (`d182dc8`), 2026-11-26; `v1.0.1` (`ff3ae88`), 2026-11-18; `v1.0.0` (`6cd195e`), 2026-11-14 | ✅ |
 
 ## 2. Names that differ from the guide
 
@@ -153,6 +153,7 @@ Worth doing later: put a passphrase on the SSH key (`ssh-keygen -p -f ~/.ssh/dig
 - **Release `v1.0.1` deployed (2026-11-18, about 12:24 UTC)**, by Claude over SSH at the user's request, following `deploy/README.md` §6. Contents: the upload-panel fix (a picked file never reached the list after the destination folder was changed; new rows now scroll into view) plus documentation only, no migration. Steps: pre-deploy backup `dms-20261118-122339.dump.age` (364 KB, verified, copied to the B2 backups bucket); `git checkout v1.0.1` on the server (clean tree, `ff3ae88`); `up -d --build`. Checked: `migrate` exited 0 with "No pending migrations to apply"; all 8 services up, `api` healthy; `/api/health` returns ok from outside; the live bundle (`index-C7NclR-v.js`) contains the fix. **Rollback** (no migration): `git checkout v1.0.0 && dc up -d --build`.
 - **Invite code for a second organization (2026-11-24)**, inserted by Claude over SSH at the user's request: one single-use code in `signup_invite_code` (`maxUses` 1, no expiry, active, `usedCount` 0). The code itself is not recorded here. Once the new organization exists, check `usedCount` is 1; if it is never used, deactivate it (`UPDATE signup_invite_code SET active = false WHERE code = '…'`).
 - **Release `v1.0.2` deployed (2026-11-26, about 10:37 UTC)**, by Claude over SSH at the user's request, following `deploy/README.md` §6. Contents: searchable person pickers (internal share recipient, department "add existing member"), dropdown filters with more than 20 options become a searchable multi-tick list (searchable single pick on the upload form), and the upload panel no longer pre-selects a document type; frontend only, no migration. `master` fast-forwarded to `d182dc8` and tagged `v1.0.2`. Steps: pre-deploy backup `dms-20261126-103232.dump.age` (604 KB, verified, copied to the B2 backups bucket); `git checkout v1.0.2` on the server (clean tree); `up -d --build`. Checked: `migrate` "No pending migrations to apply"; all 8 services up, `api` healthy; `/api/health` ok from outside; the live bundle (`index-w_inHWiS.js`) contains the new screens. **Rollback** (no migration): `git checkout v1.0.1 && dc up -d --build`.
+- **Release `v1.0.3` deployed (2026-11-27, about 05:54 UTC)**, by Claude over SSH at the user's request ("commit and deploy to production"). Contents: upload accepts IT files (`.env`, `.key`, `.json`, `.yml`, `.log`, `.tmp`, `.zip`, certificates…); clean text is previewable and searchable, other files are download-only; secret files are stored but never indexed for search; programs, double-click scripts, shortcuts and HTML/SVG stay blocked. No migration. `master` fast-forwarded to `333517a` and tagged `v1.0.3`. Steps: pre-deploy backup `dms-20261127-055325.dump.age` (968 KB, verified, copied to the B2 backups bucket); `git checkout v1.0.3` on the server (clean tree); `up -d --build`. Checked: `migrate` "No pending migrations to apply"; all 8 services up twice, `api` healthy; no errors in the logs (only Caddy's usual OCSP-stapling notice); `/api/health` ok from outside; the API code holds the new rules and the live bundle (`index-0tvuoSTX.js`) has the new upload screens. **Rollback** (no migration): `git checkout v1.0.2 && dc up -d --build`.
 
 ## 7. Things the guide didn't say (all folded into the guide, the Data Protection doc and the developer runbook on 2026-11-14)
 

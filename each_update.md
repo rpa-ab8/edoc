@@ -3612,3 +3612,20 @@ User request: support `.key`, `.env`, temp files and most IT file types. Decided
     that `.zip` files are accepted.
 - Not deployed. It needs a release (`v1.0.3`, patch: no migration). Not yet checked by hand in the browser,
   because the local backend was stopped for low memory.
+
+## 2026-11-27 — Release v1.0.3 deployed to production
+
+At the user's request ("commit and deploy to production"):
+- **Commits:** the IT-file upload feature (`cebafdc`) and the pending docs (`333517a`, which includes the release
+  procedure and the v1.0.2 record).
+- **Publish:** `master` fast-forwarded and tagged `v1.0.3` at `333517a`, then pushed.
+- **Deploy:** pre-deploy backup `dms-20261127-055325.dump.age` (verified, copied off-site), then
+  `git checkout v1.0.3` and `up -d --build`.
+- **Checks:**
+  - no pending migrations;
+  - all 8 services up (checked twice);
+  - `/api/health` ok;
+  - the live bundle `index-0tvuoSTX.js` has the new upload texts.
+- **Recorded:** `docs/DMS_Production_Details.md` and the release history table in
+  `docs/DMS_Release_and_Deployment_Procedure.md`.
+- **Rollback:** `git checkout v1.0.2 && dc up -d --build`.

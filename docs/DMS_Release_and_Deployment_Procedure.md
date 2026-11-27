@@ -770,5 +770,6 @@ the next. Don't chain them into one command that deploys even when the backup fa
 | `v1.0.0` | `6cd195e` | 2026-11-14 | First production release (Release 1 as amended by PRD v1.2) | Initial schema | n/a (first install) |
 | `v1.0.1` | `ff3ae88` | 2026-11-18 ≈ 12:24 | Upload panel: picked file not reaching the list after a folder change; new rows scroll into view | None | `dms-20261118-122339.dump.age` |
 | `v1.0.2` | `d182dc8` | 2026-11-26 ≈ 10:37 | Searchable people pickers (share, add member); dropdown filters > 20 options become searchable multi-tick; searchable long dropdowns on upload; document type must be chosen before adding files | None | `dms-20261126-103232.dump.age` |
+| `v1.0.3` | `333517a` | 2026-11-27 ≈ 05:54 | Upload accepts IT files (`.env`, `.key`, `.json`, `.tmp`, `.zip`…): text previewable and searchable, others download-only, secret files not indexed; programs, scripts and HTML/SVG blocked | None | `dms-20261127-055325.dump.age` |
 
 Add a row for every release, including ones that were rolled back (mark them).
