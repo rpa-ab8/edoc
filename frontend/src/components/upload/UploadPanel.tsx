@@ -3,8 +3,7 @@ import { primaryButtonBase, secondaryButtonBase } from "../AuthCard";
 import { Select } from "../Select";
 import { MetadataFields, type FieldValues } from "./MetadataFields";
 import {
-  ACCEPTED_UPLOAD_ACCEPT,
-  ACCEPTED_UPLOAD_EXTENSIONS,
+  uploadAllowed,
   duplicatesFromError,
   humanFileSize,
   uploadDocument,
@@ -52,11 +51,6 @@ function baseName(fileName: string): string {
   return dot > 0 ? fileName.slice(0, dot) : fileName;
 }
 
-function extensionOk(fileName: string): boolean {
-  const dot = fileName.lastIndexOf(".");
-  const ext = dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
-  return ACCEPTED_UPLOAD_EXTENSIONS.includes(ext);
-}
 
 /**
  * The upload experience (UPL-1..5). A destination folder (documents always live in one — so it's
@@ -361,8 +355,8 @@ export function UploadPanel({
                       Drop files here, or <span className="text-primary">browse</span>
                     </p>
                     <p className="mt-1 text-[12.5px] text-subtle">
-                      Filing as <span className="font-medium text-ink">{type.name}</span> · PDF, JPG, PNG, DOCX,
-                      XLSX · up to 120MB each
+                      Filing as <span className="font-medium text-ink">{type.name}</span> · any document or IT
+                      file · up to 120MB each
                     </p>
                   </>
                 ) : (
@@ -378,7 +372,6 @@ export function UploadPanel({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept={ACCEPTED_UPLOAD_ACCEPT}
                   className="hidden"
                   // The input sits inside the drop zone, whose onClick opens it — without this its
                   // own click bubbles back up and asks to open the picker a second time.
@@ -498,9 +491,9 @@ export function UploadPanel({
 
   function toItem(file: File): UploadItem {
     const item: UploadItem = { key: nextKey(), file, title: baseName(file.name), status: "ready" };
-    if (!extensionOk(file.name)) {
+    if (!uploadAllowed(file.name)) {
       item.status = "error";
-      item.message = `Unsupported type — accepted: ${ACCEPTED_UPLOAD_EXTENSIONS.join(", ")}`;
+      item.message = "Programs, scripts and web pages can't be uploaded";
     }
     return item;
   }

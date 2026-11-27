@@ -145,7 +145,8 @@ try {
   console.log("\n── disguised or fake files are refused, and nothing is stored ──");
   for (const [label, name, mime, bytes, code] of [
     ["an HTML page named .pdf", "invoice.pdf", "application/pdf", Buffer.from("<html><script>alert(document.cookie)</script></html>"), "unrecognised_content"],
-    ["an executable named .pdf", "invoice.pdf", "application/pdf", Buffer.concat([Buffer.from("MZ"), Buffer.alloc(200)]), "unrecognised_content"],
+    // Executable bytes are refused before anything else, whatever the name (2026-11-27).
+    ["an executable named .pdf", "invoice.pdf", "application/pdf", Buffer.concat([Buffer.from("MZ"), Buffer.alloc(200)]), "unsupported_format"],
     ["an SVG named .png", "logo.png", "image/png", Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>`), "unrecognised_content"],
     ["a plain text file named .docx", "notes.docx", "application/octet-stream", Buffer.from("hello world"), "unrecognised_content"],
     ["a generic ZIP named .docx", "archive.docx", "application/octet-stream", plainZipBytes(`g${stamp}`), "unrecognised_content"],
@@ -218,6 +219,87 @@ try {
       const res = await upload(name, mime, bytes);
       check(`refused: ${label}`, res.statusCode === 400 && json(res).error === code, `${res.statusCode} ${res.body.slice(0, 140)}`);
       check(`…nothing stored for ${label.split(" named")[0]}`, storedCount() === before);
+    }
+  }
+
+  console.log("\n── IT files: any other file is accepted (added 2026-11-27) ──");
+  {
+    const marker = `zzitfile${stamp}`;
+    const secret = `zzsecret${stamp}`;
+    const stored = async (res: { body: string }) => {
+      const id = json(res).document?.id ?? "";
+      return { id, v: await prisma.version.findFirst({ where: { documentId: id } }) };
+    };
+    const search = async (q: string) => {
+      const r = await server.inject({ method: "POST", url: `/departments/${dept.id}/search`, headers: auth, payload: { q } });
+      return r.statusCode === 200 ? (JSON.parse(r.body) as { results: { id: string }[] }).results : [];
+    };
+
+    // Plain-text IT files: stored as text/plain, searchable, previewable.
+    for (const [name, mime] of [
+      ["config.json", "application/json"],
+      ["deploy.yml", "application/octet-stream"],
+      ["server.log", "text/plain"],
+      ["Dockerfile", "application/octet-stream"],
+    ] as const) {
+      const res = await upload(name, mime, Buffer.from(`# ${name}\nvalue: ${marker}${name.replace(/\W/g, "")}\n`));
+      const { v } = await stored(res);
+      check(`control: ${name} is accepted as text/plain with its text stored`, res.statusCode === 201 && v?.mimeType === "text/plain" && (v?.ocrText ?? "").includes(marker), `${res.statusCode} ${res.body.slice(0, 120)} → ${v?.mimeType}`);
+    }
+    check("…and IT text files are found by full-text search", (await search(`${marker}configjson`)).length === 1);
+
+    // Secret files: stored and previewable, but their text is never indexed.
+    let envId = "";
+    for (const name of [".env", ".env.production", "server.key", "cert.pem", "id_rsa"]) {
+      const res = await upload(name, "application/octet-stream", Buffer.from(`PASSWORD=${secret}\n`));
+      const { id, v } = await stored(res);
+      if (!envId) envId = id;
+      check(`control: secret file ${name} is accepted as text/plain`, res.statusCode === 201 && v?.mimeType === "text/plain", `${res.statusCode} ${res.body.slice(0, 120)} → ${v?.mimeType}`);
+      check(`…its contents are NOT stored for search`, v?.ocrStatus === "done" && v?.ocrText == null, `${v?.ocrStatus} ${String(v?.ocrText).slice(0, 40)}`);
+    }
+    check("…a password inside a secret file is not found by search", (await search(secret)).length === 0);
+    const envPreview = await server.inject({ method: "GET", url: `/documents/${envId}/file`, headers: auth });
+    check("…but a secret file can still be previewed as text", envPreview.statusCode === 200 && envPreview.headers["content-type"] === "text/plain; charset=utf-8" && envPreview.body.includes(secret), `${envPreview.statusCode} ${envPreview.headers["content-type"]}`);
+
+    // Binary files: download only.
+    let binId = "";
+    for (const [name, bytes] of [
+      ["cache.tmp", Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x10, 0x20])],
+      ["backup.zip", plainZipBytes(`z${stamp}`)],
+      ["renamed-pdf.tmp", pdfBytes(`t${stamp}`)],
+      ["client.pfx", Buffer.from([0x30, 0x82, 0x01, 0x00, 0x02, 0x01, 0x03])],
+    ] as const) {
+      const res = await upload(name, "application/octet-stream", bytes);
+      const { id, v } = await stored(res);
+      if (!binId) binId = id;
+      check(`control: ${name} is accepted as download-only octet-stream`, res.statusCode === 201 && v?.mimeType === "application/octet-stream" && v?.ocrText == null, `${res.statusCode} ${res.body.slice(0, 120)} → ${v?.mimeType}`);
+    }
+    const binPreview = await server.inject({ method: "GET", url: `/documents/${binId}/file`, headers: auth });
+    check("…a binary file is never served inline (preview refused)", binPreview.statusCode === 415 && json(binPreview).error === "preview_unavailable", `${binPreview.statusCode} ${binPreview.body.slice(0, 100)}`);
+
+    // Programs, double-click scripts and web pages stay blocked; nothing is stored.
+    for (const [label, name, bytes] of [
+      ["an .exe", "setup.exe", Buffer.concat([Buffer.from("MZ"), Buffer.alloc(100)])],
+      ["a .bat script", "run.bat", Buffer.from("@echo off\r\ndel /q *\r\n")],
+      ["a .js script", "tool.js", Buffer.from("WScript.Echo('x')\n")],
+      ["an .msi", "app.msi", Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])],
+      ["an .html page", "page.html", Buffer.from("<html><script>alert(1)</script></html>")],
+      ["an .svg", "logo.svg", Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>`)],
+      ["a double extension", "invoice.pdf.exe", pdfBytes(`x${stamp}`)],
+      ["executable bytes named .tmp", "update.tmp", Buffer.concat([Buffer.from("MZ"), Buffer.alloc(100)])],
+      ["an ELF binary named .bin", "tool.bin", Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(60)])],
+      ["HTML sent as text/html with no extension", "page", Buffer.from("<!doctype html><html></html>")],
+    ] as const) {
+      const before = storedCount();
+      const res = await upload(name, label.includes("text/html") ? "text/html" : "application/octet-stream", bytes);
+      if (label.includes("text/html")) {
+        // No extension and not clean text → stored download-only (never served inline), not refused.
+        const { v } = await stored(res);
+        check(`control: ${label} is stored download-only, never as a page`, res.statusCode === 201 && v?.mimeType === "application/octet-stream", `${res.statusCode} → ${v?.mimeType}`);
+        continue;
+      }
+      check(`refused: ${label}`, res.statusCode === 400 && json(res).error === "unsupported_format", `${res.statusCode} ${res.body.slice(0, 140)}`);
+      check(`…nothing stored for ${label}`, storedCount() === before);
     }
   }
 

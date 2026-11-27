@@ -5,7 +5,7 @@ import * as documentService from "./document.service.js";
 import { DocumentError } from "./document.service.js";
 import type { PermissionActor } from "../../lib/effective-permissions.js";
 import type { PermissionTarget } from "../../plugins/authenticate.js";
-import { contentTypeHeader } from "../../lib/upload-formats.js";
+import { contentTypeHeader, isInlineSafe } from "../../lib/upload-formats.js";
 
 const fieldValuesSchema = z
   .array(
@@ -124,6 +124,11 @@ export default async function documentRoutes(app: FastifyInstance, opts: { prism
         versionId,
         mode,
       );
+      // Only PDFs, images and text open in the browser; anything else (an Office file, a .zip, a
+      // .tmp…) is download-only, so a preview request for it is refused rather than served inline.
+      if (mode === "preview" && !isInlineSafe(file.mimeType)) {
+        return reply.code(415).send({ error: "preview_unavailable", message: "This file type can only be downloaded." });
+      }
       reply.header("Content-Type", contentTypeHeader(file.mimeType));
       // Serve exactly the stored type — never let a browser sniff a text file into something else.
       reply.header("X-Content-Type-Options", "nosniff");

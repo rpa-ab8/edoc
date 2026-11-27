@@ -23,7 +23,6 @@ import { CopyButton } from "../components/CopyButton";
 import { ApiRequestError } from "../lib/api";
 import { fetchDepartment } from "../lib/departments";
 import {
-  ACCEPTED_UPLOAD_ACCEPT,
   deleteDocument,
   downloadDocumentFile,
   editDocumentMetadata,
@@ -311,7 +310,6 @@ export function DocumentViewerPage() {
           ref={versionInputRef}
           type="file"
           className="hidden"
-          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(e) => void onVersionFile(e)}
         />
       </header>

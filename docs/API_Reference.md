@@ -737,7 +737,30 @@ Text files are `ocrStatus: done` immediately and searchable without the OCR work
 Inline HTML *inside* a Markdown document is accepted (the viewer never renders raw HTML); a file that **is** an
 HTML/SVG page is refused. Files are served with `Content-Type: text/markdown; charset=utf-8` (or `text/plain`)
 and `X-Content-Type-Options: nosniff`.
-Errors: `400 unsupported_format` (name/type not accepted), `400 unrecognised_content` (bytes aren't a valid
+**Any other file** (added 2026-11-27 for IT files — `.env`, `.key`, `.json`, `.yml`, `.log`, `.tmp`, `.zip`,
+certificates, files with no extension…). An extension that isn't one of the formats above never borrows a format
+from the declared MIME:
+
+| Content | Stored as | Preview | Search |
+|---|---|---|---|
+| clean UTF-8 text (same test as Markdown) and not a recognised binary format | `text/plain` | as text | text indexed at upload |
+| anything else | `application/octet-stream` | **none** — download only | none |
+
+- **Secret files** — extensions `env key pem ppk p12 pfx jks keystore kdbx asc gpg pgp ovpn`, names `.env*`,
+  `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, `.npmrc`, `.pgpass`, `.netrc`, `.htpasswd`, `.git-credentials`,
+  `credentials`, `kubeconfig` (`isSecretFile`). They're stored and can be previewed, but their text is **never
+  indexed** (`ocrText` null), so a password in them is not found by search. They can still be found by name and metadata.
+- **Always refused** (`400 unsupported_format`):
+  - programs and installers (`exe dll com scr pif cpl msi msp mst msc sys drv ocx appx msix application gadget jar`);
+  - scripts Windows runs on a double-click (`bat cmd vbs vbe js jse wsf wsh ws hta reg inf scf`);
+  - shortcuts (`lnk url`);
+  - web pages and SVG (`html htm xhtml xht shtml mht mhtml svg svgz`);
+  - any file whose **bytes** are an executable (PE `MZ`, ELF, Mach-O, Java class), whatever its name.
+- `GET /documents/:id/file` and `GET /links/:token/file` without `download=1` return
+  `415 preview_unavailable` for any type other than PDF, PNG, JPEG, `text/plain` and `text/markdown`. A
+  download-only file is never served inline.
+
+Errors: `400 unsupported_format` (a blocked type or executable content), `400 unrecognised_content` (bytes aren't a valid
 accepted file), `400 content_mismatch` (e.g. a PNG named `.pdf`), `400 empty_file`, `413 file_too_large`,
 `400 file_required`.
 

@@ -1,13 +1,24 @@
 /**
- * The accepted upload formats (Feature Spec §6.4 / UPL): PDF, JPEG, PNG, DOCX, XLSX, and — added
- * 2026-11-07 by the product owner — Markdown (.md/.markdown) and plain text (.txt). Anything else is
- * rejected with a clear message rather than failing silently.
+ * The accepted upload formats (Feature Spec §6.4 / UPL).
+ *
+ * Core formats — PDF, JPEG, PNG, DOCX, XLSX, Markdown (.md/.markdown) and plain text (.txt) — are
+ * verified by content (SECURITY_AUDIT.md M-5) and previewed in the viewer.
+ *
+ * Since 2026-11-27 (product owner), any other file is accepted too, so IT departments can file
+ * `.env`, `.key`, `.json`, `.yml`, `.log`, `.tmp`, `.zip`, certificates and the like:
+ *   - clean UTF-8 text → stored as `text/plain`: previewed as text, searchable;
+ *   - anything else    → stored as `application/octet-stream`: download only, never served inline,
+ *     no text extracted.
+ * Two things stay refused: programs and scripts Windows runs on a double-click (`.exe`, `.bat`,
+ * `.msi`, `.js`…) or whose bytes are an executable whatever the name, and web pages / SVG (a browser
+ * would run them). Secret files (`.env*`, `.key`, `.pem`, `id_rsa`…) are stored and previewable but
+ * their contents are never indexed for search (`isSecretFile`).
  *
  * Text formats carry their own content as their searchable text, so they need no OCR: the upload
  * stores it on the version straight away (`ocr: "text"`).
  *
- * A file is accepted when either its declared MIME type or its filename extension maps to one of
- * these — browsers and OSes are inconsistent about the MIME they attach (Office files often arrive
+ * A core file is accepted when either its declared MIME type or its filename extension maps to one of
+ * them — browsers and OSes are inconsistent about the MIME they attach (Office files often arrive
  * as `application/octet-stream`), so the extension is a legitimate fallback. The canonical MIME is
  * what gets stored on the version, so downstream (the viewer, the OCR worker) sees one value per
  * format regardless of what the client sent.
@@ -103,6 +114,68 @@ export function extractPlainText(data: Buffer): string {
 
 export const ACCEPTED_EXTENSIONS = ACCEPTED_FORMATS.flatMap((f) => f.extensions);
 
+/** Any other clean-text file (`.env`, `.json`, `.log`, `.yml`, a file with no extension…). */
+export const OTHER_TEXT_FORMAT: AcceptedFormat = { mimeType: "text/plain", extensions: [], ocr: "text" };
+/** Any other non-text file (`.tmp`, `.zip`, `.pfx`…): stored as-is, download only. */
+export const OTHER_BINARY_FORMAT: AcceptedFormat = { mimeType: "application/octet-stream", extensions: [], ocr: "none" };
+
+/**
+ * Extensions that are never accepted: programs and scripts Windows runs (or installs) on a
+ * double-click, shortcuts, and pages/images a browser would execute. Matched on the last extension,
+ * so `invoice.pdf.exe` is refused too. Kept equal to the frontend's BLOCKED_UPLOAD_EXTENSIONS.
+ */
+export const BLOCKED_EXTENSIONS = [
+  // programs, installers, libraries
+  "exe", "dll", "com", "scr", "pif", "cpl", "msi", "msp", "mst", "msc", "sys", "drv", "ocx",
+  "appx", "msix", "application", "gadget", "jar",
+  // scripts Windows runs on a double-click
+  "bat", "cmd", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ws", "hta", "reg", "inf", "scf",
+  // shortcuts
+  "lnk", "url",
+  // pages and images a browser executes
+  "html", "htm", "xhtml", "xht", "shtml", "mht", "mhtml", "svg", "svgz",
+];
+
+/** Executable file signatures, refused whatever the file is called. */
+function isExecutable(data: Buffer): boolean {
+  if (data.length >= 2 && data[0] === 0x4d && data[1] === 0x5a) return true; // Windows PE ("MZ")
+  if (data.length < 4) return false;
+  const sig = data.readUInt32BE(0);
+  return (
+    sig === 0x7f454c46 || // ELF
+    sig === 0xfeedface || sig === 0xfeedfacf || sig === 0xcefaedfe || sig === 0xcffaedfe || // Mach-O
+    sig === 0xcafebabe // Mach-O universal / Java class
+  );
+}
+
+const SECRET_EXTENSIONS = ["env", "key", "pem", "ppk", "p12", "pfx", "jks", "keystore", "kdbx", "asc", "gpg", "pgp", "ovpn"];
+const SECRET_NAMES = [
+  /^\.env(\..+)?$/, // .env, .env.production, .env.local…
+  /^id_(rsa|dsa|ecdsa|ed25519)$/, // SSH private keys (the .pub halves are public)
+  /^\.(npmrc|pgpass|netrc|htpasswd|git-credentials)$/,
+  /^(credentials|kubeconfig)$/,
+];
+
+/**
+ * Whether a file normally holds passwords or private keys. Such files are stored and can be
+ * previewed by people allowed to see them, but their text is never put in the search index — a
+ * password must not turn up when someone searches for it.
+ */
+export function isSecretFile(fileName: string): boolean {
+  const name = (fileName.split(/[\\/]/).pop() ?? "").toLowerCase();
+  return SECRET_EXTENSIONS.includes(extensionOf(name)) || SECRET_NAMES.some((re) => re.test(name));
+}
+
+/** Whether a stored MIME type may be served inline (opened in the browser) rather than only downloaded. */
+export function isInlineSafe(mimeType: string): boolean {
+  return ["application/pdf", "image/png", "image/jpeg", "text/plain", "text/markdown"].includes(mimeType.toLowerCase());
+}
+
+/** Never index a secret file's text: it keeps its MIME (so it can still be previewed) but carries no text. */
+function withoutTextIfSecret(format: AcceptedFormat, fileName: string): AcceptedFormat {
+  return format.ocr === "text" && isSecretFile(fileName) ? { ...format, ocr: "none" } : format;
+}
+
 const byMime = (mime: string) => ACCEPTED_FORMATS.find((f) => f.mimeType === mime)!;
 
 /**
@@ -176,10 +249,23 @@ export type UploadFormatVerdict =
  * JPEG ↔ PNG: a mislabelled photo is common and harmless, and is stored as what it really is.
  * Markdown and plain text are verified the other way round (no signature exists): clean UTF-8 text,
  * not an HTML/SVG page, and not a binary format renamed — see `isPlainText`.
+ *
+ * A file whose extension is none of the core formats is an "other" file: clean text is stored as
+ * `text/plain`, anything else as download-only `application/octet-stream`. Blocked extensions and
+ * executable bytes are refused first, whatever the file claims to be.
  */
 export function verifyUploadFormat(declaredMime: string | undefined, fileName: string, data: Buffer): UploadFormatVerdict {
-  const claimed = resolveFormat(declaredMime, fileName);
-  if (!claimed) return { ok: false, code: "unsupported_format" };
+  const ext = extensionOf(fileName);
+  if (BLOCKED_EXTENSIONS.includes(ext) || isExecutable(data)) return { ok: false, code: "unsupported_format" };
+
+  // A core claim needs a core extension — or no extension and a core declared MIME. An unknown
+  // extension never borrows a core format from the declared MIME.
+  const claimed = ACCEPTED_EXTENSIONS.includes(ext) || ext === "" ? resolveFormat(declaredMime, fileName) : null;
+  if (!claimed) {
+    // A recognised binary format under another name (a PDF renamed .tmp) is kept as a file, not shown as text.
+    const format = !detectFormat(data) && isPlainText(data) ? OTHER_TEXT_FORMAT : OTHER_BINARY_FORMAT;
+    return { ok: true, format: withoutTextIfSecret(format, fileName) };
+  }
   const detected = detectFormat(data);
 
   // Text has no signature to detect, so the evidence is the reverse: the bytes must be clean text, and
@@ -188,7 +274,9 @@ export function verifyUploadFormat(declaredMime: string | undefined, fileName: s
     // PDF detection tolerates leading junk; a note that merely *mentions* "%PDF-" near the top isn't a PDF.
     const realBinary = detected && (detected.mimeType !== "application/pdf" || data.subarray(0, 5).toString("latin1") === "%PDF-");
     if (realBinary) return { ok: false, code: "content_mismatch", claimed, detected };
-    return isPlainText(data) ? { ok: true, format: claimed } : { ok: false, code: "unrecognised_content", claimed };
+    return isPlainText(data)
+      ? { ok: true, format: withoutTextIfSecret(claimed, fileName) }
+      : { ok: false, code: "unrecognised_content", claimed };
   }
   if (!detected) return { ok: false, code: "unrecognised_content", claimed };
   const bothImages = claimed.ocr === "image" && detected.ocr === "image";

@@ -1,11 +1,25 @@
 import {
   DocumentIcon,
+  DownloadIcon,
   FileImageIcon,
   FilePdfIcon,
   FileSheetIcon,
+  LockIcon,
 } from "./icons";
 
 type IconComponent = typeof DocumentIcon;
+
+/** Files that usually hold passwords or keys — mirrors the server's `isSecretFile` (upload-formats.ts). */
+function isSecretName(fileName: string): boolean {
+  const name = (fileName.split(/[\\/]/).pop() ?? "").toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const ext = dot >= 0 ? name.slice(dot + 1) : "";
+  return (
+    ["env", "key", "pem", "ppk", "p12", "pfx", "jks", "keystore", "kdbx", "asc", "gpg", "pgp", "ovpn"].includes(ext) ||
+    /^\.env(\..+)?$/.test(name) ||
+    /^id_(rsa|dsa|ecdsa|ed25519)$/.test(name)
+  );
+}
 
 /**
  * Maps a file's MIME type (or, as a fallback, its extension) to a distinct icon + colour, so a
@@ -32,6 +46,13 @@ function resolve(mimeType?: string | null, fileName?: string | null): { Icon: Ic
   }
   if (mime === "text/markdown" || ["md", "markdown"].includes(ext)) {
     return { Icon: DocumentIcon, tint: "bg-cat-orange-tint text-cat-orange" };
+  }
+  // IT files (2026-11-27): secrets read as a lock, download-only files as a download glyph.
+  if (isSecretName(fileName ?? "")) {
+    return { Icon: LockIcon, tint: "bg-surface-muted text-muted" };
+  }
+  if (mime === "application/octet-stream") {
+    return { Icon: DownloadIcon, tint: "bg-surface-muted text-subtle" };
   }
   return { Icon: DocumentIcon, tint: "bg-surface-muted text-subtle" };
 }

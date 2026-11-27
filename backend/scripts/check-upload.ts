@@ -194,8 +194,8 @@ try {
       folderId: folder.id,
       documentTypeId: docType.id,
       fieldValues: nameVal("Bad"),
-      // .txt is accepted since 2026-11-07 (Markdown / plain text); a CSV is still not a supported type.
-      file: { fileName: "data.csv", declaredMime: "text/csv", data: Buffer.from("a,b\n1,2\n") },
+      // Since 2026-11-27 any file is accepted except programs, double-click scripts and web pages.
+      file: { fileName: "setup.exe", declaredMime: "application/octet-stream", data: Buffer.from("MZ not really") },
     }),
   );
   await expectError("a file over the size limit is refused", "file_too_large", () =>

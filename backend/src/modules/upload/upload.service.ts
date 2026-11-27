@@ -5,7 +5,6 @@ import type { PermissionActor } from "../../lib/effective-permissions.js";
 import {
   verifyUploadFormat,
   extractPlainText,
-  ACCEPTED_EXTENSIONS,
   type AcceptedFormat,
 } from "../../lib/upload-formats.js";
 import { enqueueOcr } from "../../lib/queue.js";
@@ -64,7 +63,7 @@ function validateFile(env: Env, file: IncomingFile) {
     const label = (f?: AcceptedFormat) => (f?.extensions[0] ?? "file").toUpperCase();
     const message =
       verdict.code === "unsupported_format"
-        ? `Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}.`
+        ? "This file type can't be uploaded. Programs, scripts that run on a double-click (.exe, .bat, .msi, .js…) and web pages (.html, .svg) are blocked."
         : verdict.code === "unrecognised_content"
           ? `This file isn't a valid ${label(verdict.claimed)} — its contents don't match. It may be damaged or renamed.`
           : `This file is named as a ${label(verdict.claimed)} but its contents are a ${label(verdict.detected)}. Rename it to .${verdict.detected!.extensions[0]} and upload again.`;

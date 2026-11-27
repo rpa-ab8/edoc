@@ -56,7 +56,6 @@ import {
   renameFolder,
 } from "../lib/folders";
 import {
-  ACCEPTED_UPLOAD_ACCEPT,
   deleteDocument,
   fetchFolderDocuments,
   fetchNeedsDetails,
@@ -1121,7 +1120,6 @@ export function DepartmentWorkspacePage() {
         ref={versionInputRef}
         type="file"
         className="hidden"
-        accept={ACCEPTED_UPLOAD_ACCEPT}
         onChange={(e) => void onVersionFileChosen(e)}
       />
 

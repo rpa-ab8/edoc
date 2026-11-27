@@ -318,10 +318,23 @@ export function duplicatesFromError(err: unknown): DuplicateMatch[] {
   return [];
 }
 
-// Kept equal to the server's ACCEPTED_FORMATS (backend/src/lib/upload-formats.ts); the server is the
-// authority and also verifies each file's content.
-export const ACCEPTED_UPLOAD_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "docx", "xlsx", "md", "markdown", "txt"];
-export const ACCEPTED_UPLOAD_ACCEPT = ACCEPTED_UPLOAD_EXTENSIONS.map((e) => `.${e}`).join(",");
+// Since 2026-11-27 any file can be uploaded except these: programs, scripts Windows runs on a
+// double-click, shortcuts and web pages. Kept equal to the server's BLOCKED_EXTENSIONS
+// (backend/src/lib/upload-formats.ts); the server is the authority and also checks each file's content.
+export const BLOCKED_UPLOAD_EXTENSIONS = [
+  "exe", "dll", "com", "scr", "pif", "cpl", "msi", "msp", "mst", "msc", "sys", "drv", "ocx",
+  "appx", "msix", "application", "gadget", "jar",
+  "bat", "cmd", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ws", "hta", "reg", "inf", "scf",
+  "lnk", "url",
+  "html", "htm", "xhtml", "xht", "shtml", "mht", "mhtml", "svg", "svgz",
+];
+
+/** Whether a file may be uploaded, judged by its (last) extension. */
+export function uploadAllowed(fileName: string): boolean {
+  const dot = fileName.lastIndexOf(".");
+  const ext = dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
+  return !BLOCKED_UPLOAD_EXTENSIONS.includes(ext);
+}
 
 export function humanFileSize(bytes: number | null | undefined): string {
   if (bytes == null) return "—";

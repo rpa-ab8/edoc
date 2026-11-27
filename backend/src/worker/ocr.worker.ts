@@ -13,7 +13,7 @@ import { loadEnv } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { OCR_QUEUE_NAME, createQueueConnection, type OcrJobData } from "../lib/queue.js";
 import { getActiveStorageDriver } from "../modules/storage/storage.service.js";
-import { extractPlainText, resolveFormat } from "../lib/upload-formats.js";
+import { extractPlainText, isSecretFile, resolveFormat } from "../lib/upload-formats.js";
 import { refreshDocumentSearchVector } from "../lib/search-vector.js";
 
 const env = loadEnv();
@@ -48,6 +48,8 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
 }
 
 async function extractText(mimeType: string, fileName: string, buffer: Buffer): Promise<string> {
+  // A secret file (.env, .key, id_rsa…) is never indexed, even if a job for it is ever queued.
+  if (isSecretFile(fileName)) return "";
   const format = resolveFormat(mimeType, fileName);
   if (!format || format.ocr === "none") return "";
   // Text files are normally stored with their text at upload and never queued; handled here too so a

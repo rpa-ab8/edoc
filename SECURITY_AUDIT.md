@@ -214,6 +214,21 @@ Notes:
   - The bytes must be a real PDF (`%PDF-` in the first 1 KB), PNG, JPEG, or an OOXML ZIP whose directory holds `[Content_Types].xml` plus `word/document.xml` (DOCX) or `xl/workbook.xml` (XLSX). The ZIP check reads only the directory and decompresses nothing.
   - The content must also agree with the name and declared type. JPEG ↔ PNG is the one tolerated mismatch.
   - The stored MIME is the **detected** one. Refusals happen before anything is stored, with codes `unrecognised_content` / `content_mismatch` and messages users can act on.
+- **Amended 2026-11-27 — other files accepted (product owner, for IT files).** Files with any other extension
+  are now accepted, without weakening the check above:
+  - A core extension (`pdf jpg jpeg png docx xlsx md markdown txt`) is still verified exactly as above. An
+    unknown extension never borrows a core format from the declared MIME.
+  - Other files are stored as `text/plain` when they are clean text and not a recognised binary format;
+    otherwise as `application/octet-stream`. Only PDF, PNG, JPEG and text are ever served inline. Any other type
+    gets `415 preview_unavailable` on a preview request and can only be downloaded (`Content-Disposition: attachment`).
+  - Refused outright: programs and scripts Windows runs on a double-click, shortcuts, HTML/SVG
+    (`BLOCKED_EXTENSIONS`, last extension, so `x.pdf.exe` is caught), and any file whose bytes are an executable
+    (PE/ELF/Mach-O/Java class).
+  - Secret files (`.env*`, `.key`, `.pem`, `id_rsa`…, `isSecretFile`) are never text-indexed. The OCR worker
+    refuses them too.
+  - Regression: `check:upload-content` (now 100 checks).
+  - **Residual risk:** there is still no malware scanner. A `.zip` or an Office file with macros can carry
+    malware. This is the scanner item below, now more relevant.
 - ✅ **Concurrency cap** (`lib/upload-limiter.ts`):
   - A slot is taken per upload *before* the body is read: `MAX_CONCURRENT_UPLOADS` (8) per process and `MAX_CONCURRENT_UPLOADS_PER_USER` (2). Worst-case memory is now about 1 GB.
   - Over the limit returns 429 `upload_busy` with Retry-After. The web client uploads one file at a time, so normal use never hits it.
